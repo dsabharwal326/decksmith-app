@@ -1,51 +1,114 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import os
+from pathlib import Path
+import threading
 
-from core.engine import build_deck_from_text
-
-
-def select_file():
-    file_path = filedialog.askopenfilename(
-        filetypes=[("Text Files", "*.txt")]
-    )
-
-    if not file_path:
-        return
-
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        deck_name = os.path.splitext(os.path.basename(file_path))[0]
-        output_path = os.path.splitext(file_path)[0] + ".apkg"
-
-        build_deck_from_text(text, deck_name, output_path)
-
-        messagebox.showinfo("Success", f"Deck created:\n{output_path}")
-
-    except Exception as e:
-        messagebox.showerror("Error", str(e))
+from core.engine import generate_deck
 
 
-root = tk.Tk()
-root.title("Anki Multi-Model Generator")
-root.geometry("400x200")
+class AnkiClozeGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Anki Cloze Generator")
 
-label = tk.Label(
-    root,
-    text="Convert Text File to Anki Deck",
-    font=("Helvetica", 12)
-)
-label.pack(pady=20)
+        self.selected_files = []
+        self.optimize_var = tk.BooleanVar(value=True)
 
-button = tk.Button(
-    root,
-    text="Select Text File",
-    command=select_file,
-    width=20,
-    height=2
-)
-button.pack()
+        self._build_ui()
 
-root.mainloop()
+    def _build_ui(self):
+        # File Selection Frame
+        file_frame = tk.Frame(self.root)
+        file_frame.pack(padx=10, pady=10, fill="x")
+
+        self.file_listbox = tk.Listbox(file_frame, height=8, width=60)
+        self.file_listbox.pack(side="left", fill="both", expand=True)
+
+        scrollbar = tk.Scrollbar(file_frame)
+        scrollbar.pack(side="right", fill="y")
+        self.file_listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.file_listbox.yview)
+
+        # Buttons Frame
+        button_frame = tk.Frame(self.root)
+        button_frame.pack(padx=10, pady=(0, 10), fill="x")
+
+        tk.Button(button_frame, text="Add Files", command=self.add_files).pack(side="left")
+        tk.Button(button_frame, text="Clear Files", command=self.clear_files).pack(side="left", padx=5)
+
+        # Optimization Checkbox
+        optimize_frame = tk.Frame(self.root)
+        optimize_frame.pack(padx=10, pady=(0, 10), fill="x")
+
+        tk.Checkbutton(
+            optimize_frame,
+            text="Enable Optimization",
+            variable=self.optimize_var
+        ).pack(anchor="w")
+
+        # Generate Button
+        generate_frame = tk.Frame(self.root)
+        generate_frame.pack(padx=10, pady=(0, 10), fill="x")
+
+        self.generate_button = tk.Button(
+            generate_frame,
+            text="Generate Deck",
+            command=self.generate_deck_threaded
+        )
+        self.generate_button.pack(fill="x")
+
+    def add_files(self):
+        files = filedialog.askopenfilenames(
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+        )
+        for file in files:
+            if file not in self.selected_files:
+                self.selected_files.append(file)
+                self.file_listbox.insert(tk.END, file)
+
+    def clear_files(self):
+        self.selected_files.clear()
+        self.file_listbox.delete(0, tk.END)
+
+    def generate_deck_threaded(self):
+        if not self.selected_files:
+            messagebox.showerror("Error", "No input files selected.")
+            return
+
+        self.generate_button.config(state="disabled")
+        thread = threading.Thread(target=self.generate_deck)
+        thread.start()
+
+    def generate_deck(self):
+        try:
+            output_path = filedialog.asksaveasfilename(
+                defaultextension=".apkg",
+                filetypes=[("Anki Package", "*.apkg")]
+            )
+
+            if not output_path:
+                self._reset_button()
+                return
+
+            generate_deck(
+                input_files=[Path(p) for p in self.selected_files],
+                output_file=Path(output_path),
+                optimize=self.optimize_var.get()
+            )
+
+            messagebox.showinfo("Success", "Deck generated successfully.")
+
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+        finally:
+            self._reset_button()
+
+    def _reset_button(self):
+        self.generate_button.config(state="normal")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = AnkiClozeGUI(root)
+    root.mainloop()
