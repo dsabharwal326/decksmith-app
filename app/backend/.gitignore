@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Generated files
+*.apkg
