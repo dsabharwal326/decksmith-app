@@ -29,6 +29,7 @@ class OptimizationReport:
     duplicates_removed: int = 0
     empty_removed: int = 0
     cloze_reindexed: int = 0
+    invalid_lines: int = 0
 
     def merge(self, other: "OptimizationReport"):
         self.total_input += other.total_input
@@ -36,6 +37,7 @@ class OptimizationReport:
         self.duplicates_removed += other.duplicates_removed
         self.empty_removed += other.empty_removed
         self.cloze_reindexed += other.cloze_reindexed
+        self.invalid_lines += other.invalid_lines
 
 
 # =========================================
@@ -111,17 +113,24 @@ BASIC_EXTRA_MODEL = genanki.Model(
 class Parser:
 
     @staticmethod
-    def parse(text: str) -> List[Note]:
+    def parse(text: str, strict: bool = True) -> Tuple[List[Note], int]:
         lines = text.split("\n")
         notes = []
+        invalid_count = 0
 
         for raw in lines:
             line = raw.strip()
             if not line:
                 continue
-            notes.append(Parser._detect(line))
 
-        return notes
+            try:
+                notes.append(Parser._detect(line))
+            except Exception:
+                if strict:
+                    raise
+                invalid_count += 1
+
+        return notes, invalid_count
 
     @staticmethod
     def _detect(line: str) -> Note:
@@ -250,37 +259,38 @@ class Transformer:
 
 
 # =========================================
-# Public Engine API (FILE-BASED)
+# Public Engine API
 # =========================================
 
 def generate_deck(
     input_files: List[Path],
     output_file: Path,
-    optimize: bool = True
+    optimize: bool = True,
+    deck_name: str | None = None,
+    strict: bool = True
 ) -> OptimizationReport:
 
     if not input_files:
         raise ValueError("No input files provided.")
 
-    text_blocks = []
-
-    for file_path in input_files:
-        if not file_path.exists():
-            raise ValueError(f"File not found: {file_path}")
-
-        text_blocks.append(file_path.read_text(encoding="utf-8"))
-
     all_notes: List[Note] = []
     aggregate_report = OptimizationReport()
 
-    for text in text_blocks:
-        notes = Parser.parse(text)
+    for file_path in input_files:
+
+        if not file_path.exists():
+            raise ValueError(f"File not found: {file_path}")
+
+        text = file_path.read_text(encoding="utf-8")
+        notes, invalid = Parser.parse(text, strict=strict)
+
+        aggregate_report.invalid_lines += invalid
+        aggregate_report.total_input += len(notes) + invalid
 
         if optimize:
             notes, report = DeckOptimizer.optimize(notes)
             aggregate_report.merge(report)
         else:
-            aggregate_report.total_input += len(notes)
             aggregate_report.total_output += len(notes)
 
         all_notes.extend(notes)
@@ -288,10 +298,10 @@ def generate_deck(
     if not all_notes:
         raise ValueError("No valid notes found.")
 
-    deck_name = output_file.stem
-    deck_id = _stable_int_hash(deck_name)
+    final_deck_name = deck_name if deck_name else output_file.stem
+    deck_id = _stable_int_hash(final_deck_name)
 
-    deck = genanki.Deck(deck_id, deck_name)
+    deck = genanki.Deck(deck_id, final_deck_name)
 
     for note in all_notes:
         deck.add_note(Transformer.to_genanki(note))
