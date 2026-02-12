@@ -9,5 +9,5 @@ build/
 dist/
 *.spec
 
-# Generated files
+# Generated decks
 *.apkg
