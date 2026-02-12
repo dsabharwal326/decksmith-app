@@ -39,68 +39,98 @@ def _stable_int_hash(text: str) -> int:
 
 
 # =========================================
-# Cloze Repair Engine
+# Helper: Brace Balance Check
 # =========================================
 
-def _repair_cloze_text(text: str, strict_repair: bool) -> Tuple[str, Dict[str, str]]:
+def _is_balanced(text: str) -> bool:
+    return text.count("{{") == text.count("}}")
+
+
+# =========================================
+# Strict Line-Based Cloze Repair
+# =========================================
+
+def _repair_cloze_text(text: str, strict_repair: bool) -> Tuple[List[str], Dict[str, str]]:
 
     lines = text.split("\n")
-    repaired_lines = []
-    repair_map = {}
+    repaired_notes: List[str] = []
+    repair_map: Dict[str, str] = {}
 
     buffer = ""
-    open_count = 0
-    original_chunk = []
+    original_buffer = ""
 
     for raw in lines:
         stripped = raw.strip()
+
+        # Blank line resets buffer
         if not stripped:
+            if buffer:
+                repaired_notes.append(buffer.strip())
+                buffer = ""
+                original_buffer = ""
             continue
 
-        original_chunk.append(stripped)
-        buffer += " " + stripped if buffer else stripped
+        # If no active buffer
+        if not buffer:
 
-        open_count += stripped.count("{{")
-        open_count -= stripped.count("}}")
+            # If line is balanced, emit directly
+            if _is_balanced(stripped):
+                if "{{c" in stripped:
+                    repaired_notes.append(stripped)
+                continue
 
-        if open_count == 0:
-            fixed = buffer.strip()
+            # If unbalanced, start buffering
+            buffer = stripped
+            original_buffer = stripped
+            continue
+
+        # If we are buffering (previous line was unbalanced)
+        buffer += " " + stripped
+        original_buffer += " " + stripped
+
+        if _is_balanced(buffer):
+
+            fixed = re.sub(r"\s+", " ", buffer.strip())
 
             if "{{c" not in fixed:
                 buffer = ""
-                original_chunk = []
+                original_buffer = ""
                 continue
 
-            if fixed.count("{{") > fixed.count("}}"):
-                if strict_repair:
-                    raise ValueError(f"Unmatched braces detected:\n{fixed}")
-                missing = fixed.count("{{") - fixed.count("}}")
-                fixed += "}}" * missing
+            if buffer != fixed:
+                repair_map[original_buffer] = fixed
 
-            fixed = re.sub(r"\s+", " ", fixed)
-
-            original_text = " ".join(original_chunk)
-
-            if original_text != fixed:
-                repair_map[original_text] = fixed
-
-            repaired_lines.append(fixed)
+            repaired_notes.append(fixed)
             buffer = ""
-            original_chunk = []
+            original_buffer = ""
 
-    return "\n".join(repaired_lines), repair_map
+    # Flush remaining buffer
+    if buffer:
+        if strict_repair:
+            raise ValueError(f"Unmatched cloze braces detected:\n{buffer}")
+
+        # Auto-close braces if allowed
+        missing = buffer.count("{{") - buffer.count("}}")
+        if missing > 0:
+            fixed = buffer + "}}" * missing
+            fixed = re.sub(r"\s+", " ", fixed.strip())
+            repair_map[buffer] = fixed
+            repaired_notes.append(fixed)
+        buffer = ""
+
+    return repaired_notes, repair_map
 
 
 # =========================================
 # Parser
 # =========================================
 
-def _parse_cloze_lines(text: str) -> Tuple[List[Note], int]:
+def _parse_cloze_lines(lines: List[str]) -> Tuple[List[Note], int]:
 
     notes = []
     invalid = 0
 
-    for line in text.split("\n"):
+    for line in lines:
         line = line.strip()
         if not line:
             continue
@@ -133,12 +163,12 @@ def generate_deck(
         raw_text = file_path.read_text(encoding="utf-8")
         report.total_input += len(raw_text.split("\n"))
 
-        repaired_text, repair_map = _repair_cloze_text(
+        repaired_lines, repair_map = _repair_cloze_text(
             raw_text,
             strict_repair=strict_repair
         )
 
-        notes, invalid = _parse_cloze_lines(repaired_text)
+        notes, invalid = _parse_cloze_lines(repaired_lines)
 
         report.total_output += len(notes)
         report.invalid_lines += invalid
