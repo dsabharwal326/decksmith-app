@@ -1,114 +1,178 @@
+from __future__ import annotations
+
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from pathlib import Path
-import threading
+from typing import Dict
 
-from core.engine import generate_deck
+from core.engine import build_deck
+from core.classifier import classify_notes
+from core.policy_resolver import resolve_policy
+from core.augmentation import augment_notes, ExpansionPayload
+from core.config import ConfigManager
 
 
-class AnkiClozeGUI:
-    def __init__(self, root):
+# =========================================
+# GLOBALS
+# =========================================
+
+CONFIG_PATH = Path("config.json")
+config_manager = ConfigManager(CONFIG_PATH)
+
+
+# =========================================
+# GUI APPLICATION
+# =========================================
+
+class DecksmithApp:
+
+    def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Anki Cloze Generator")
+        self.root.title("Decksmith")
 
-        self.selected_files = []
-        self.strict_repair_var = tk.BooleanVar(value=False)
-        self.deck_name_var = tk.StringVar()
+        self.input_path: Path | None = None
+        self.output_path: Path | None = None
 
         self._build_ui()
 
+    # -------------------------------------
+    # UI
+    # -------------------------------------
+
     def _build_ui(self):
 
-        file_frame = tk.Frame(self.root)
-        file_frame.pack(padx=10, pady=10, fill="both", expand=True)
+        frame = tk.Frame(self.root, padx=20, pady=20)
+        frame.pack(fill="both", expand=True)
 
-        self.file_listbox = tk.Listbox(file_frame, height=8)
-        self.file_listbox.pack(fill="both", expand=True)
+        tk.Button(
+            frame,
+            text="Select Input File",
+            command=self.select_input
+        ).pack(fill="x", pady=5)
 
-        tk.Button(self.root, text="Add Files", command=self.add_files).pack(fill="x")
-        tk.Button(self.root, text="Clear Files", command=self.clear_files).pack(fill="x")
+        tk.Button(
+            frame,
+            text="Select Output .apkg",
+            command=self.select_output
+        ).pack(fill="x", pady=5)
 
-        tk.Label(self.root, text="Deck Name (Optional Override)").pack()
-        tk.Entry(self.root, textvariable=self.deck_name_var).pack(fill="x")
+        tk.Button(
+            frame,
+            text="Build Deck",
+            command=self.build
+        ).pack(fill="x", pady=10)
 
-        tk.Checkbutton(
-            self.root,
-            text="Strict Repair Enforcement (fail on unmatched braces)",
-            variable=self.strict_repair_var
-        ).pack(anchor="w")
+    # -------------------------------------
+    # FILE SELECTION
+    # -------------------------------------
 
-        tk.Button(self.root, text="Generate Deck", command=self.generate_deck_threaded).pack(fill="x")
+    def select_input(self):
+        file_path = filedialog.askopenfilename(
+            title="Select Input Text File",
+            filetypes=[("Text Files", "*.txt")]
+        )
+        if file_path:
+            self.input_path = Path(file_path)
 
-        self.report = tk.Text(self.root, height=8)
-        self.report.pack(fill="both", expand=True)
+    def select_output(self):
+        file_path = filedialog.asksaveasfilename(
+            title="Save Deck As",
+            defaultextension=".apkg",
+            filetypes=[("Anki Package", "*.apkg")]
+        )
+        if file_path:
+            self.output_path = Path(file_path)
 
-    def add_files(self):
-        files = filedialog.askopenfilenames()
-        for f in files:
-            self.selected_files.append(f)
-            self.file_listbox.insert(tk.END, f)
+    # -------------------------------------
+    # BUILD PIPELINE
+    # -------------------------------------
 
-    def clear_files(self):
-        self.selected_files.clear()
-        self.file_listbox.delete(0, tk.END)
+    def build(self):
 
-    def generate_deck_threaded(self):
-        threading.Thread(target=self.generate_deck).start()
+        if not self.input_path:
+            messagebox.showerror("Error", "Input file not selected.")
+            return
 
-    def generate_deck(self):
+        if not self.output_path:
+            messagebox.showerror("Error", "Output file not selected.")
+            return
 
         try:
-            output_path = filedialog.asksaveasfilename(defaultextension=".apkg")
-            if not output_path:
-                return
+            # ----------------------------------------
+            # PARSE INPUT
+            # ----------------------------------------
 
-            deck_name = self.deck_name_var.get().strip() or None
+            raw_text = self.input_path.read_text(encoding="utf-8")
+            lines = raw_text.splitlines()
 
-            report = generate_deck(
-                input_files=[Path(p) for p in self.selected_files],
-                output_file=Path(output_path),
-                deck_name=deck_name,
-                strict_repair=self.strict_repair_var.get()
+            from core.engine import parse_lines_to_notes
+            notes = parse_lines_to_notes(lines)
+
+            # ----------------------------------------
+            # CLASSIFICATION (Deterministic)
+            # ----------------------------------------
+
+            notes = classify_notes(notes)
+
+            # ----------------------------------------
+            # POLICY RESOLUTION
+            # ----------------------------------------
+
+            user_default_policy = config_manager.get_user_default_policy()
+            user_profiles = config_manager.get_profiles()
+
+            resolved_policy = resolve_policy(
+                system_profile_name="standard_v1",
+                user_default_policy=user_default_policy,
+                user_profiles=user_profiles,
+                selected_profile_name=None,
+                per_build_override=None,
             )
 
-            self.root.after(0, self._display_report, report)
+            # ----------------------------------------
+            # AUGMENTATION (Optional)
+            # ----------------------------------------
 
-            if report.repairs:
-                self.root.after(0, self._show_repair_preview, report.repairs)
+            payload_map: Dict[str, ExpansionPayload] = {}
+
+            # NOTE:
+            # This is currently empty.
+            # Future AI provider layer will populate payload_map
+            # keyed by SHA identity.
+
+            if payload_map:
+                notes, _ = augment_notes(
+                    notes=notes,
+                    payload_map=payload_map,
+                    policy=resolved_policy,
+                    prompt_hash=None,
+                    dictionary_sha=None,
+                )
+
+            # ----------------------------------------
+            # BUILD DECK
+            # ----------------------------------------
+
+            build_deck(
+                notes=notes,
+                output_path=self.output_path
+            )
+
+            messagebox.showinfo("Success", "Deck built successfully.")
 
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            messagebox.showerror("Build Failed", str(e))
 
-    def _display_report(self, report):
-        self.report.delete("1.0", tk.END)
-        self.report.insert(
-            tk.END,
-            f"Total Input Lines: {report.total_input}\n"
-            f"Total Output Notes: {report.total_output}\n"
-            f"Invalid Lines: {report.invalid_lines}\n"
-            f"Lines Auto-Fixed: {report.lines_autofixed}\n"
-        )
 
-    def _show_repair_preview(self, repairs):
+# =========================================
+# ENTRY POINT
+# =========================================
 
-        window = tk.Toplevel(self.root)
-        window.title("Repair Preview (Before → After)")
-        window.geometry("800x500")
-
-        text = tk.Text(window)
-        text.pack(fill="both", expand=True)
-
-        for before, after in repairs.items():
-            text.insert(tk.END, "BEFORE:\n")
-            text.insert(tk.END, before + "\n")
-            text.insert(tk.END, "AFTER:\n")
-            text.insert(tk.END, after + "\n")
-            text.insert(tk.END, "-" * 60 + "\n")
-
-        text.config(state="disabled")
+def main():
+    root = tk.Tk()
+    app = DecksmithApp(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = AnkiClozeGUI(root)
-    root.mainloop()
+    main()

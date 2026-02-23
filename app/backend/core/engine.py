@@ -1,205 +1,270 @@
-import genanki
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import List, Tuple, Set
 import hashlib
 import re
-from dataclasses import dataclass, field
-from typing import List, Tuple, Dict
-from pathlib import Path
+import genanki
 
 
-# =========================================
-# Canonical Note
-# =========================================
+# =========================
+# CONSTANTS
+# =========================
+
+ALLOWED_NOTE_TYPES = {
+    "cloze",
+    "basic",
+    "basic_reverse",
+    "basic_extra",
+}
+
+CLOZE_PATTERN = re.compile(r"\{\{c\d+::.+?\}\}")
+
+
+# =========================
+# CANONICAL NOTE MODEL
+# =========================
 
 @dataclass(frozen=True)
 class Note:
     note_type: str
     front: str
+    back: str
+    extra: str = ""
+    tags: Tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self):
+        object.__setattr__(self, "tags", tuple(sorted(self.tags)))
 
 
-# =========================================
-# Optimization Report
-# =========================================
+# =========================
+# BUILD RESULT
+# =========================
 
-@dataclass
-class OptimizationReport:
-    total_input: int = 0
-    total_output: int = 0
-    invalid_lines: int = 0
-    lines_autofixed: int = 0
-    repairs: Dict[str, str] = field(default_factory=dict)
-
-
-# =========================================
-# Deterministic Hash
-# =========================================
-
-def _stable_int_hash(text: str) -> int:
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    return int(digest[:8], 16)
+@dataclass(frozen=True)
+class BuildResult:
+    deck: genanki.Deck
+    total_notes: int
+    total_cards: int
+    deck_id: int
+    model_ids_used: Tuple[int, ...]
+    warnings: Tuple[str, ...]
 
 
-# =========================================
-# Helper: Brace Balance Check
-# =========================================
+# =========================
+# DETERMINISTIC ID HELPERS
+# =========================
 
-def _is_balanced(text: str) -> bool:
+def _stable_hash_int(value: str) -> int:
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return int(digest[:12], 16)
+
+
+def _deck_id(deck_name: str) -> int:
+    return _stable_hash_int(f"deck::{deck_name}")
+
+
+def _model_id(name: str) -> int:
+    return _stable_hash_int(f"model::{name}")
+
+
+# =========================
+# VALIDATION
+# =========================
+
+class ValidationError(Exception):
+    pass
+
+
+def _contains_cloze(text: str) -> bool:
+    return bool(CLOZE_PATTERN.search(text))
+
+
+def _braces_balanced(text: str) -> bool:
     return text.count("{{") == text.count("}}")
 
 
-# =========================================
-# Strict Line-Based Cloze Repair
-# =========================================
+def _validate_note(note: Note) -> None:
+    if note.note_type not in ALLOWED_NOTE_TYPES:
+        raise ValidationError(f"Invalid note_type: {note.note_type}")
 
-def _repair_cloze_text(text: str, strict_repair: bool) -> Tuple[List[str], Dict[str, str]]:
+    if note.note_type == "cloze":
+        if not _contains_cloze(note.front):
+            raise ValidationError("Cloze note missing cloze pattern")
+        if not _braces_balanced(note.front):
+            raise ValidationError("Cloze note has unbalanced braces")
+    else:
+        if _contains_cloze(note.front) or _contains_cloze(note.back):
+            raise ValidationError("Non-cloze note contains cloze pattern")
 
-    lines = text.split("\n")
-    repaired_notes: List[str] = []
-    repair_map: Dict[str, str] = {}
+    if note.note_type in {"basic", "basic_reverse", "basic_extra"}:
+        if not note.front.strip():
+            raise ValidationError("Front field empty")
+        if not note.back.strip():
+            raise ValidationError("Back field empty")
 
-    buffer = ""
-    original_buffer = ""
 
-    for raw in lines:
-        stripped = raw.strip()
+# =========================
+# PARSER
+# =========================
 
-        # Blank line resets buffer
-        if not stripped:
-            if buffer:
-                repaired_notes.append(buffer.strip())
-                buffer = ""
-                original_buffer = ""
+def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
+    notes: List[Note] = []
+
+    lines = text.splitlines()
+    cloze_buffer: List[str] = []
+    collecting_cloze = False
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+
+        if not line.strip():
+            cloze_buffer.clear()
+            collecting_cloze = False
             continue
 
-        # If no active buffer
-        if not buffer:
-
-            # If line is balanced, emit directly
-            if _is_balanced(stripped):
-                if "{{c" in stripped:
-                    repaired_notes.append(stripped)
-                continue
-
-            # If unbalanced, start buffering
-            buffer = stripped
-            original_buffer = stripped
-            continue
-
-        # If we are buffering (previous line was unbalanced)
-        buffer += " " + stripped
-        original_buffer += " " + stripped
-
-        if _is_balanced(buffer):
-
-            fixed = re.sub(r"\s+", " ", buffer.strip())
-
-            if "{{c" not in fixed:
-                buffer = ""
-                original_buffer = ""
-                continue
-
-            if buffer != fixed:
-                repair_map[original_buffer] = fixed
-
-            repaired_notes.append(fixed)
-            buffer = ""
-            original_buffer = ""
-
-    # Flush remaining buffer
-    if buffer:
         if strict_repair:
-            raise ValueError(f"Unmatched cloze braces detected:\n{buffer}")
+            line = line.strip()
 
-        # Auto-close braces if allowed
-        missing = buffer.count("{{") - buffer.count("}}")
-        if missing > 0:
-            fixed = buffer + "}}" * missing
-            fixed = re.sub(r"\s+", " ", fixed.strip())
-            repair_map[buffer] = fixed
-            repaired_notes.append(fixed)
-        buffer = ""
+        if collecting_cloze:
+            cloze_buffer.append(line)
+            combined = " ".join(cloze_buffer)
 
-    return repaired_notes, repair_map
-
-
-# =========================================
-# Parser
-# =========================================
-
-def _parse_cloze_lines(lines: List[str]) -> Tuple[List[Note], int]:
-
-    notes = []
-    invalid = 0
-
-    for line in lines:
-        line = line.strip()
-        if not line:
+            if _braces_balanced(combined):
+                notes.append(Note("cloze", combined, ""))
+                cloze_buffer.clear()
+                collecting_cloze = False
             continue
 
-        if "{{c" not in line:
-            invalid += 1
+        if _contains_cloze(line):
+            if _braces_balanced(line):
+                notes.append(Note("cloze", line, ""))
+            else:
+                cloze_buffer = [line]
+                collecting_cloze = True
             continue
 
-        notes.append(Note("cloze", front=line))
+        if "|||" in line:
+            parts = line.split("|||", 2)
+            if len(parts) == 3:
+                notes.append(
+                    Note("basic_extra", parts[0].strip(), parts[1].strip(), parts[2].strip())
+                )
+            continue
 
-    return notes, invalid
+        if "||" in line:
+            parts = line.split("||", 1)
+            if len(parts) == 2:
+                notes.append(
+                    Note("basic_reverse", parts[0].strip(), parts[1].strip())
+                )
+            continue
+
+        if "::" in line:
+            parts = line.split("::", 1)
+            if len(parts) == 2:
+                notes.append(
+                    Note("basic", parts[0].strip(), parts[1].strip())
+                )
+            continue
+
+    return notes
 
 
-# =========================================
-# Public Engine API
-# =========================================
+# =========================
+# MODEL FACTORY
+# =========================
 
-def generate_deck(
-    input_files: List[Path],
-    output_file: Path,
-    deck_name: str | None = None,
-    strict_repair: bool = False
-) -> OptimizationReport:
+def _create_models():
+    return {
+        "cloze": genanki.Model(
+            _model_id("cloze"),
+            "Cloze",
+            fields=[{"name": "Text"}, {"name": "Extra"}],
+            templates=[{
+                "name": "Cloze Card",
+                "qfmt": "{{cloze:Text}}",
+                "afmt": "{{cloze:Text}}<br>{{Extra}}",
+            }],
+            model_type=genanki.Model.CLOZE,
+        ),
+        "basic": genanki.Model(
+            _model_id("basic"),
+            "Basic",
+            fields=[{"name": "Front"}, {"name": "Back"}],
+            templates=[{
+                "name": "Card 1",
+                "qfmt": "{{Front}}",
+                "afmt": "{{Front}}<hr id=\"answer\">{{Back}}",
+            }],
+        ),
+        "basic_reverse": genanki.Model(
+            _model_id("basic_reverse"),
+            "Basic (Reversed)",
+            fields=[{"name": "Front"}, {"name": "Back"}],
+            templates=[
+                {"name": "Card 1", "qfmt": "{{Front}}", "afmt": "{{Front}}<hr id=\"answer\">{{Back}}"},
+                {"name": "Card 2", "qfmt": "{{Back}}", "afmt": "{{Back}}<hr id=\"answer\">{{Front}}"},
+            ],
+        ),
+        "basic_extra": genanki.Model(
+            _model_id("basic_extra"),
+            "Basic (Extra)",
+            fields=[{"name": "Front"}, {"name": "Back"}, {"name": "Extra"}],
+            templates=[{
+                "name": "Card 1",
+                "qfmt": "{{Front}}",
+                "afmt": "{{Front}}<hr id=\"answer\">{{Back}}<br>{{Extra}}",
+            }],
+        ),
+    }
 
-    report = OptimizationReport()
-    all_notes: List[Note] = []
 
-    for file_path in input_files:
+# =========================
+# ENGINE ENTRY
+# =========================
 
-        raw_text = file_path.read_text(encoding="utf-8")
-        report.total_input += len(raw_text.split("\n"))
+def build_deck(notes: List[Note], deck_name: str, strict_repair: bool) -> BuildResult:
+    deck_id = _deck_id(deck_name)
+    deck = genanki.Deck(deck_id, deck_name)
 
-        repaired_lines, repair_map = _repair_cloze_text(
-            raw_text,
-            strict_repair=strict_repair
-        )
+    models = _create_models()
+    used_model_ids: Set[int] = set()
+    warnings = []
+    total_cards = 0
+    accepted_notes = 0
 
-        notes, invalid = _parse_cloze_lines(repaired_lines)
+    for note in notes:
+        try:
+            _validate_note(note)
+        except ValidationError as e:
+            if strict_repair:
+                raise
+            warnings.append(str(e))
+            continue
 
-        report.total_output += len(notes)
-        report.invalid_lines += invalid
-        report.lines_autofixed += len(repair_map)
-        report.repairs.update(repair_map)
+        model = models[note.note_type]
+        used_model_ids.add(model.model_id)
 
-        all_notes.extend(notes)
+        if note.note_type == "cloze":
+            fields = [note.front, note.extra]
+        elif note.note_type == "basic":
+            fields = [note.front, note.back]
+        elif note.note_type == "basic_reverse":
+            fields = [note.front, note.back]
+        else:
+            fields = [note.front, note.back, note.extra]
 
-    if not all_notes:
-        raise ValueError("No valid cloze notes found.")
+        deck.add_note(genanki.Note(model=model, fields=fields, tags=list(note.tags)))
 
-    final_name = deck_name if deck_name else output_file.stem
-    deck_id = _stable_int_hash(final_name)
+        total_cards += len(model.templates)
+        accepted_notes += 1
 
-    model = genanki.Model(
-        1607392319,
-        "Cloze",
-        fields=[{"name": "Text"}],
-        templates=[{
-            "name": "Cloze Card",
-            "qfmt": "{{cloze:Text}}",
-            "afmt": "{{cloze:Text}}",
-        }],
-        model_type=genanki.Model.CLOZE,
+    return BuildResult(
+        deck=deck,
+        total_notes=accepted_notes,
+        total_cards=total_cards,
+        deck_id=deck_id,
+        model_ids_used=tuple(sorted(used_model_ids)),
+        warnings=tuple(warnings),
     )
-
-    deck = genanki.Deck(deck_id, final_name)
-
-    for note in all_notes:
-        deck.add_note(genanki.Note(model=model, fields=[note.front]))
-
-    genanki.Package(deck).write_to_file(str(output_file))
-
-    return report
