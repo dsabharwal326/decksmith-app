@@ -1,13 +1,31 @@
-# macOS
-.DS_Store
-
-# Python
+# Python cache
 __pycache__/
+*.py[cod]
+*$py.class
 
-# PyInstaller
+# Virtual environments
+venv/
+.env/
+
+# Build artifacts
 build/
 dist/
 *.spec
 
-# Generated decks
+# OS files
+.DS_Store
+Thumbs.db
+
+# Anki artifacts
 *.apkg
+
+# Local config
+config.json
+
+# SQLite temp
+*.sqlite
+*.db
+
+# IDE
+.vscode/
+.idea/
