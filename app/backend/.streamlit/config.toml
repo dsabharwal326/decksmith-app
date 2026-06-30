@@ -1,0 +1,9 @@
+[server]
+maxUploadSize = 50          # MB — per file; 50 is Streamlit Cloud's hard ceiling
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"

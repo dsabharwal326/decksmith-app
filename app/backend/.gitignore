@@ -29,3 +29,5 @@ config.json
 # IDE
 .vscode/
 .idea/
+# Streamlit secrets — never commit real keys
+.streamlit/secrets.toml

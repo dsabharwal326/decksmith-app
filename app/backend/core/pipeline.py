@@ -2,13 +2,9 @@ from __future__ import annotations
 
 from typing import List, Optional, Dict, Tuple
 
-from core.engine import Note, build_deck
-from core.augmentation import (
-    augment_notes,
-    ExpansionMode,
-    ExpansionPayload,
-    AugmentationMetadata,
-)
+from core.engine import Note, BuildResult, build_deck
+from core.augmentation import augment_notes, ExpansionPayload, AugmentationMetadata
+from core.augmentation_policy import AugmentationPolicy
 
 
 def build_with_optional_augmentation(
@@ -17,32 +13,18 @@ def build_with_optional_augmentation(
     strict_repair: bool,
     *,
     payload_map: Optional[Dict[str, ExpansionPayload]] = None,
-    expansion_mode: Optional[ExpansionMode] = None,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
+    policy: Optional[AugmentationPolicy] = None,
     prompt_hash: Optional[str] = None,
     dictionary_sha: Optional[str] = None,
-) -> Tuple:
-    """
-    Deterministic orchestration wrapper.
-
-    - Engine remains unaware of augmentation.
-    - Augmentation fully optional.
-    - No side effects.
-    - No config logic.
-    """
-
+) -> Tuple[BuildResult, Optional[AugmentationMetadata]]:
     metadata: Optional[AugmentationMetadata] = None
-
     working_notes = notes
 
-    if payload_map is not None and expansion_mode is not None:
+    if payload_map is not None and policy is not None:
         working_notes, metadata = augment_notes(
             notes=notes,
             payload_map=payload_map,
-            mode=expansion_mode,
-            provider=provider,
-            model=model,
+            policy=policy,
             prompt_hash=prompt_hash,
             dictionary_sha=dictionary_sha,
         )

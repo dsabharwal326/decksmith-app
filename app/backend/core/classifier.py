@@ -61,7 +61,7 @@ def classify_notes(
 
                 for pattern in patterns:
                     if pattern.search(text):
-                        tag = f"{parent}::{child}"
+                        tag = f"{parent}::{child}".replace(" ", "_")
                         matched_specialties.append(tag)
                         specialty_counts[tag] = specialty_counts.get(tag, 0) + 1
                         break

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Set
+from typing import Dict, List, Tuple, Set
 import hashlib
 import re
 import genanki
@@ -43,12 +43,13 @@ class Note:
 
 @dataclass(frozen=True)
 class BuildResult:
-    deck: genanki.Deck
+    decks: Tuple[genanki.Deck, ...]
     total_notes: int
     total_cards: int
     deck_id: int
     model_ids_used: Tuple[int, ...]
     warnings: Tuple[str, ...]
+    subdeck_counts: Tuple[Tuple[str, int], ...]
 
 
 # =========================
@@ -137,7 +138,16 @@ def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
             continue
 
         if _contains_cloze(line):
-            if _braces_balanced(line):
+            # Cloze with extra info:  {{c1::term}} sentence ||| extra shown after flip
+            if "|||" in line:
+                cloze_part, extra_part = line.split("|||", 1)
+                cloze_part = cloze_part.strip()
+                if _braces_balanced(cloze_part):
+                    notes.append(Note("cloze", cloze_part, "", extra_part.strip()))
+                else:
+                    cloze_buffer = [cloze_part]
+                    collecting_cloze = True
+            elif _braces_balanced(line):
                 notes.append(Note("cloze", line, ""))
             else:
                 cloze_buffer = [line]
@@ -221,18 +231,38 @@ def _create_models():
 
 
 # =========================
+# SUBDECK ROUTING
+# =========================
+
+def _taxonomy_tags(note: Note) -> List[str]:
+    return [t for t in note.tags if "::" in t]
+
+
+def _subdeck_name(note: Note, root: str) -> str:
+    taxonomy = _taxonomy_tags(note)
+    if len(taxonomy) == 0:
+        return f"{root}::General"
+    elif len(taxonomy) == 1:
+        return f"{root}::{taxonomy[0]}"
+    else:
+        return f"{root}::Integrated"
+
+
+# =========================
 # ENGINE ENTRY
 # =========================
 
 def build_deck(notes: List[Note], deck_name: str, strict_repair: bool) -> BuildResult:
-    deck_id = _deck_id(deck_name)
-    deck = genanki.Deck(deck_id, deck_name)
+    root_id = _deck_id(deck_name)
+    root_deck = genanki.Deck(root_id, deck_name)
 
     models = _create_models()
     used_model_ids: Set[int] = set()
-    warnings = []
+    warnings: List[str] = []
     total_cards = 0
     accepted_notes = 0
+
+    subdecks: Dict[str, genanki.Deck] = {}
 
     for note in notes:
         try:
@@ -248,23 +278,37 @@ def build_deck(notes: List[Note], deck_name: str, strict_repair: bool) -> BuildR
 
         if note.note_type == "cloze":
             fields = [note.front, note.extra]
-        elif note.note_type == "basic":
-            fields = [note.front, note.back]
-        elif note.note_type == "basic_reverse":
+        elif note.note_type in {"basic", "basic_reverse"}:
             fields = [note.front, note.back]
         else:
             fields = [note.front, note.back, note.extra]
 
-        deck.add_note(genanki.Note(model=model, fields=fields, tags=list(note.tags)))
+        genanki_note = genanki.Note(model=model, fields=fields, tags=list(note.tags))
+
+        subdeck_name = _subdeck_name(note, deck_name)
+        if subdeck_name not in subdecks:
+            subdecks[subdeck_name] = genanki.Deck(_deck_id(subdeck_name), subdeck_name)
+
+        subdecks[subdeck_name].add_note(genanki_note)
 
         total_cards += len(model.templates)
         accepted_notes += 1
 
+    # Root deck first, then subdecks sorted by name for determinism
+    all_decks = tuple(
+        [root_deck] + [subdecks[k] for k in sorted(subdecks.keys())]
+    )
+
+    subdeck_counts = tuple(
+        (k, len(subdecks[k].notes)) for k in sorted(subdecks.keys())
+    )
+
     return BuildResult(
-        deck=deck,
+        decks=all_decks,
         total_notes=accepted_notes,
         total_cards=total_cards,
-        deck_id=deck_id,
+        deck_id=root_id,
         model_ids_used=tuple(sorted(used_model_ids)),
         warnings=tuple(warnings),
+        subdeck_counts=subdeck_counts,
     )

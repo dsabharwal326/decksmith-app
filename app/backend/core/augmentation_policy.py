@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Dict, Optional
 
-from core.augmentation import ExpansionMode
 from core.schema_registry import SUPPORTED_SCHEMA_VERSIONS
+
+
+# =========================================
+# EXPANSION MODE
+# =========================================
+
+class ExpansionMode(Enum):
+    OVERWRITE = "overwrite"
+    APPEND = "append"
+    EMPTY_ONLY = "empty_only"
 
 
 # =========================================

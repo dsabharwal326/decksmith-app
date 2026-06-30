@@ -6,7 +6,7 @@ import hashlib
 
 from core.engine import Note
 from core.schema_registry import get_schema, SchemaValidationError
-from core.augmentation_policy import AugmentationPolicy
+from core.augmentation_policy import AugmentationPolicy, ExpansionMode
 
 
 # =========================================

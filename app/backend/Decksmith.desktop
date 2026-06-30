@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Decksmith
+Comment=Deterministic Anki deck builder
+Exec=bash -c "cd \"$(dirname '%k')\" && python3 launch.py; echo; echo Press Enter to close.; read"
+Icon=applications-education
+Terminal=true
+Categories=Education;
+StartupNotify=true
