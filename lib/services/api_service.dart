@@ -54,6 +54,17 @@ class ApiService {
     return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
   }
 
+  Future<Map<String, dynamic>> dedupe({required Uint8List apkgBytes, required List<NoteModel> notes}) async {
+    final b64 = base64Encode(apkgBytes);
+    final res = await http.post(
+      Uri.parse('$_base/dedupe'),
+      headers: _headers,
+      body: jsonEncode({'apkg_b64': b64, 'notes': _serializeNotes(notes)}),
+    ).timeout(const Duration(seconds: 30));
+    _check(res);
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   void _check(http.Response res) {
     if (res.statusCode >= 400) {
       final body = jsonDecode(res.body);

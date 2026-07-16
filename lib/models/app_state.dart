@@ -70,6 +70,11 @@ class AppState extends ChangeNotifier {
   Uint8List? builtApkgData;
   String? errorMessage;
 
+  // dedup
+  Uint8List? existingApkgBytes;
+  String? existingApkgName;
+  int dupesSkipped = 0;
+
   List<HistoryEntry> history = [];
 
   String apiBaseURL = 'http://localhost:8503';
@@ -139,6 +144,18 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setExistingApkg(Uint8List bytes, String name) {
+    existingApkgBytes = bytes;
+    existingApkgName = name;
+    notifyListeners();
+  }
+
+  void clearExistingApkg() {
+    existingApkgBytes = null;
+    existingApkgName = null;
+    notifyListeners();
+  }
+
   void reset() {
     cardText = '';
     parsedNotes = [];
@@ -149,6 +166,7 @@ class AppState extends ChangeNotifier {
     errorMessage = null;
     processingStatus = '';
     processingProgress = 0;
+    dupesSkipped = 0;
     phase = AppPhase.idle;
     notifyListeners();
   }
