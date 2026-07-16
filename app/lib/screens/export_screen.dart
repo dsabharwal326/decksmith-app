@@ -40,6 +40,22 @@ class ExportScreen extends StatelessWidget {
             const SizedBox(height: 8),
             Text('${state.totalCards} cards • "${state.deckName}"',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            if (state.dupesSkipped > 0) ...[
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${state.dupesSkipped} duplicate${state.dupesSkipped == 1 ? '' : 's'} skipped',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSecondaryContainer,
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 32),
             SizedBox(
               width: 260,

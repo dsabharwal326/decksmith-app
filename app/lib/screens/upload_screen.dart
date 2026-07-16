@@ -20,20 +20,35 @@ class _UploadScreenState extends State<UploadScreen> {
     super.dispose();
   }
 
-  Future<void> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['txt', 'csv'], withData: true);
+  Future<void> _pickCardFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['txt', 'csv'],
+      withData: true,
+    );
     if (result == null || result.files.isEmpty) return;
-    final file = result.files.first;
-    final text = String.fromCharCodes(file.bytes!);
     if (!mounted) return;
+    final file = result.files.first;
     setState(() => _fileName = file.name);
-    context.read<AppState>().cardText = text;
+    context.read<AppState>().cardText = String.fromCharCodes(file.bytes!);
+  }
+
+  Future<void> _pickApkg() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['apkg'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    if (!mounted) return;
+    final file = result.files.first;
+    context.read<AppState>().setExistingApkg(file.bytes!, file.name);
   }
 
   Future<void> _build() async {
     final state = context.read<AppState>();
     if (state.cardText.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pick a file first')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pick a card file first')));
       return;
     }
     state.deckName = _deckNameCtrl.text.trim().isEmpty ? 'My Deck' : _deckNameCtrl.text.trim();
@@ -41,12 +56,22 @@ class _UploadScreenState extends State<UploadScreen> {
     final api = ApiService(state);
     try {
       state.setProgress('Parsing cards…', 0.1);
-      final notes = await api.parseCards(state.cardText);
+      var notes = await api.parseCards(state.cardText);
 
-      state.setProgress('Validating…', 0.35);
+      if (state.existingApkgBytes != null) {
+        state.setProgress('Checking for duplicates…', 0.3);
+        final dedupeResult = await api.dedupe(apkgBytes: state.existingApkgBytes!, notes: notes);
+        final newNotes = (dedupeResult['new_notes'] as List)
+            .map((n) => NoteModel.fromJson(n as Map<String, dynamic>))
+            .toList();
+        state.dupesSkipped = dedupeResult['duplicate_count'] as int;
+        notes = newNotes;
+      }
+
+      state.setProgress('Validating…', 0.5);
       final validation = await api.validate(notes);
 
-      state.setProgress('Building deck…', 0.7);
+      state.setProgress('Building deck…', 0.75);
       final apkg = await api.buildDeck(notes: notes, deckName: state.deckName, classify: state.classify);
 
       state.setResults(notes: notes, validation: validation, cards: notes.length, subdecks: []);
@@ -70,32 +95,55 @@ class _UploadScreenState extends State<UploadScreen> {
           Text('Drop a .txt or .csv file with your cards', style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 20),
 
+          // ── Card file picker ──
           GestureDetector(
-            onTap: _pickFile,
+            onTap: _pickCardFile,
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 36),
+              padding: const EdgeInsets.symmetric(vertical: 32),
               decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).colorScheme.outline, style: BorderStyle.solid, width: 1.5),
+                border: Border.all(
+                  color: _fileName != null
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.outline,
+                  style: BorderStyle.solid,
+                  width: 1.5,
+                ),
                 borderRadius: BorderRadius.circular(12),
-                color: Theme.of(context).colorScheme.surfaceContainerLow,
+                color: _fileName != null
+                    ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+                    : Theme.of(context).colorScheme.surfaceContainerLow,
               ),
               child: Column(
                 children: [
-                  Icon(Icons.upload_file_rounded, size: 36, color: Theme.of(context).colorScheme.primary),
+                  Icon(
+                    _fileName != null ? Icons.check_circle_rounded : Icons.upload_file_rounded,
+                    size: 36,
+                    color: _fileName != null
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                   const SizedBox(height: 8),
-                  Text(_fileName ?? 'Tap to pick a file (.txt or .csv)', style: Theme.of(context).textTheme.bodyMedium),
+                  Text(
+                    _fileName ?? 'Tap to pick a card file (.txt or .csv)',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
                 ],
               ),
             ),
           ),
 
           const SizedBox(height: 20),
+
+          // ── Deck name ──
           Text('Deck name', style: Theme.of(context).textTheme.labelMedium),
           const SizedBox(height: 6),
           TextField(
             controller: _deckNameCtrl,
-            decoration: const InputDecoration(hintText: 'e.g. Cardiology Block 2', border: OutlineInputBorder()),
+            decoration: const InputDecoration(
+              hintText: 'e.g. Cardiology Block 2',
+              border: OutlineInputBorder(),
+            ),
           ),
 
           const SizedBox(height: 12),
@@ -106,7 +154,59 @@ class _UploadScreenState extends State<UploadScreen> {
             contentPadding: EdgeInsets.zero,
           ),
 
-          const SizedBox(height: 20),
+          const Divider(height: 28),
+
+          // ── Dedup section ──
+          Row(
+            children: [
+              Icon(Icons.layers_clear_rounded, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text('Skip duplicates', style: Theme.of(context).textTheme.titleSmall),
+              const Spacer(),
+              Text('optional', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Import an existing .apkg deck — cards already in that deck will be skipped.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 10),
+
+          if (state.existingApkgName != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.4),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Theme.of(context).colorScheme.outline.withOpacity(0.4)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.check_circle_rounded, size: 16, color: Theme.of(context).colorScheme.secondary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(state.existingApkgName!, style: Theme.of(context).textTheme.bodySmall, overflow: TextOverflow.ellipsis),
+                  ),
+                  GestureDetector(
+                    onTap: state.clearExistingApkg,
+                    child: Icon(Icons.close_rounded, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+
+          OutlinedButton.icon(
+            onPressed: _pickApkg,
+            icon: const Icon(Icons.file_open_rounded, size: 18),
+            label: Text(state.existingApkgName != null ? 'Change .apkg' : 'Import existing deck (.apkg)'),
+          ),
+
+          const SizedBox(height: 24),
+
+          // ── Build button ──
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
