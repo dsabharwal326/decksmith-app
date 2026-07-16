@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:provider/provider.dart';
 import '../models/app_state.dart';
 import '../services/api_service.dart';
@@ -21,6 +23,7 @@ class _EnhanceScreenState extends State<EnhanceScreen> {
   String? _fileName;
   Uint8List? _apkgBytes;
   String _mode = 'append';
+  bool _dragging = false;
 
   Future<void> _pickApkg() async {
     final result = await FilePicker.platform.pickFiles(
@@ -94,38 +97,55 @@ class _EnhanceScreenState extends State<EnhanceScreen> {
           const SizedBox(height: 24),
 
           // ── Deck picker ──
-          GestureDetector(
-            onTap: _pickApkg,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 32),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: _apkgBytes != null
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.outline,
-                  width: 1.5,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                color: _apkgBytes != null
-                    ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
-                    : Theme.of(context).colorScheme.surfaceContainerLow,
-              ),
-              child: Column(
-                children: [
-                  Icon(
-                    _apkgBytes != null ? Icons.check_circle_rounded : Icons.file_open_rounded,
-                    size: 36,
-                    color: _apkgBytes != null
+          DropTarget(
+            onDragEntered: (_) => setState(() => _dragging = true),
+            onDragExited: (_) => setState(() => _dragging = false),
+            onDragDone: (details) async {
+              setState(() => _dragging = false);
+              final path = details.files.first.path;
+              if (!path.endsWith('.apkg')) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Drop an .apkg file')));
+                return;
+              }
+              final bytes = await File(path).readAsBytes();
+              if (!mounted) return;
+              setState(() { _fileName = path.split('/').last; _apkgBytes = bytes; });
+            },
+            child: GestureDetector(
+              onTap: _pickApkg,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: _dragging
                         ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                        : _apkgBytes != null
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.outline,
+                    width: _dragging ? 2 : 1.5,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _fileName ?? 'Tap to pick a deck (.apkg)',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
+                  borderRadius: BorderRadius.circular(12),
+                  color: _dragging
+                      ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.5)
+                      : _apkgBytes != null
+                          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+                          : Theme.of(context).colorScheme.surfaceContainerLow,
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      _dragging ? Icons.download_rounded : _apkgBytes != null ? Icons.check_circle_rounded : Icons.file_open_rounded,
+                      size: 36,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _dragging ? 'Drop it!' : _fileName ?? 'Tap or drop a deck (.apkg)',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:provider/provider.dart';
 import '../models/app_state.dart';
 import '../services/api_service.dart';
@@ -13,6 +15,8 @@ class UploadScreen extends StatefulWidget {
 class _UploadScreenState extends State<UploadScreen> {
   final _deckNameCtrl = TextEditingController(text: 'My Deck');
   String? _fileName;
+  bool _draggingCard = false;
+  bool _draggingApkg = false;
 
   @override
   void dispose() {
@@ -96,39 +100,56 @@ class _UploadScreenState extends State<UploadScreen> {
           const SizedBox(height: 20),
 
           // ── Card file picker ──
-          GestureDetector(
-            onTap: _pickCardFile,
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 32),
-              decoration: BoxDecoration(
-                border: Border.all(
-                  color: _fileName != null
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.outline,
-                  style: BorderStyle.solid,
-                  width: 1.5,
-                ),
-                borderRadius: BorderRadius.circular(12),
-                color: _fileName != null
-                    ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
-                    : Theme.of(context).colorScheme.surfaceContainerLow,
-              ),
-              child: Column(
-                children: [
-                  Icon(
-                    _fileName != null ? Icons.check_circle_rounded : Icons.upload_file_rounded,
-                    size: 36,
-                    color: _fileName != null
+          DropTarget(
+            onDragEntered: (_) => setState(() => _draggingCard = true),
+            onDragExited: (_) => setState(() => _draggingCard = false),
+            onDragDone: (details) async {
+              setState(() => _draggingCard = false);
+              final path = details.files.first.path;
+              if (!path.endsWith('.txt') && !path.endsWith('.csv')) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Drop a .txt or .csv file')));
+                return;
+              }
+              final bytes = await File(path).readAsBytes();
+              if (!mounted) return;
+              setState(() => _fileName = path.split('/').last);
+              context.read<AppState>().cardText = String.fromCharCodes(bytes);
+            },
+            child: GestureDetector(
+              onTap: _pickCardFile,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: _draggingCard
                         ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                        : _fileName != null
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.outline,
+                    width: _draggingCard ? 2 : 1.5,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _fileName ?? 'Tap to pick a card file (.txt or .csv)',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
+                  borderRadius: BorderRadius.circular(12),
+                  color: _draggingCard
+                      ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.5)
+                      : _fileName != null
+                          ? Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3)
+                          : Theme.of(context).colorScheme.surfaceContainerLow,
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      _draggingCard ? Icons.download_rounded : _fileName != null ? Icons.check_circle_rounded : Icons.upload_file_rounded,
+                      size: 36,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _draggingCard ? 'Drop it!' : _fileName ?? 'Tap or drop a card file (.txt or .csv)',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -198,10 +219,25 @@ class _UploadScreenState extends State<UploadScreen> {
             const SizedBox(height: 8),
           ],
 
-          OutlinedButton.icon(
-            onPressed: _pickApkg,
-            icon: const Icon(Icons.file_open_rounded, size: 18),
-            label: Text(state.existingApkgName != null ? 'Change .apkg' : 'Import existing deck (.apkg)'),
+          DropTarget(
+            onDragEntered: (_) => setState(() => _draggingApkg = true),
+            onDragExited: (_) => setState(() => _draggingApkg = false),
+            onDragDone: (details) async {
+              setState(() => _draggingApkg = false);
+              final path = details.files.first.path;
+              if (!path.endsWith('.apkg')) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Drop an .apkg file')));
+                return;
+              }
+              final bytes = await File(path).readAsBytes();
+              if (!mounted) return;
+              context.read<AppState>().setExistingApkg(bytes, path.split('/').last);
+            },
+            child: OutlinedButton.icon(
+              onPressed: _pickApkg,
+              icon: Icon(_draggingApkg ? Icons.download_rounded : Icons.file_open_rounded, size: 18),
+              label: Text(_draggingApkg ? 'Drop to import' : state.existingApkgName != null ? 'Change .apkg' : 'Import existing deck (.apkg)'),
+            ),
           ),
 
           const SizedBox(height: 24),
