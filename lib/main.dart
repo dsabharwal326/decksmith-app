@@ -5,6 +5,7 @@ import 'screens/upload_screen.dart';
 import 'screens/topic_screen.dart';
 import 'screens/processing_screen.dart';
 import 'screens/export_screen.dart';
+import 'screens/enhance_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 
@@ -51,6 +52,7 @@ class _HomeShellState extends State<HomeShell> {
   static const _navItems = [
     (SidebarPage.upload,   Icons.upload_file_rounded,   'Upload'),
     (SidebarPage.topic,    Icons.auto_awesome_rounded,  'Topic'),
+    (SidebarPage.enhance,  Icons.brightness_auto_rounded, 'Enhance'),
     (SidebarPage.history,  Icons.history_rounded,       'History'),
     (SidebarPage.settings, Icons.settings_rounded,      'Settings'),
   ];
@@ -61,6 +63,7 @@ class _HomeShellState extends State<HomeShell> {
     return switch (_page) {
       SidebarPage.upload   => const UploadScreen(),
       SidebarPage.topic    => const TopicScreen(),
+      SidebarPage.enhance  => const EnhanceScreen(),
       SidebarPage.history  => const HistoryScreen(),
       SidebarPage.settings => const SettingsScreen(),
     };
