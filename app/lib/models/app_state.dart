@@ -3,7 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum AppPhase { idle, processing, results, exporting }
 
-enum SidebarPage { upload, topic, history, settings }
+enum SidebarPage { upload, topic, enhance, history, settings }
 
 class NoteModel {
   final String noteType;

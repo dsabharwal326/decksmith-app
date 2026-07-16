@@ -54,6 +54,50 @@ class ApiService {
     return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
   }
 
+  Future<List<NoteModel>> importApkg(Uint8List apkgBytes) async {
+    final b64 = base64Encode(apkgBytes);
+    final res = await http.post(
+      Uri.parse('$_base/import'),
+      headers: _headers,
+      body: jsonEncode({'apkg_b64': b64}),
+    ).timeout(const Duration(seconds: 30));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> augmentGenerate(List<NoteModel> notes) async {
+    final res = await http.post(
+      Uri.parse('$_base/augment/generate'),
+      headers: _headers,
+      body: jsonEncode({'notes': _serializeNotes(notes), 'provider': state.selectedProvider}),
+    ).timeout(const Duration(seconds: 180));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    return List<Map<String, dynamic>>.from(data['proposals'] as List);
+  }
+
+  Future<List<NoteModel>> augmentApply({
+    required List<NoteModel> notes,
+    required List<Map<String, dynamic>> proposals,
+    required List<int> acceptedIndices,
+    required String expansionMode,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$_base/augment/apply'),
+      headers: _headers,
+      body: jsonEncode({
+        'notes': _serializeNotes(notes),
+        'proposals': proposals,
+        'accepted_indices': acceptedIndices,
+        'expansion_mode': expansionMode,
+      }),
+    ).timeout(const Duration(seconds: 60));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
+  }
+
   Future<Map<String, dynamic>> dedupe({required Uint8List apkgBytes, required List<NoteModel> notes}) async {
     final b64 = base64Encode(apkgBytes);
     final res = await http.post(
