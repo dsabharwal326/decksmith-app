@@ -13,7 +13,7 @@ class ExportScreen extends StatelessWidget {
     if (data == null) return;
 
     try {
-      final safe = state.deckName.replaceAll(RegExp(r'[^\w\s-]'), '').trim().replaceAll(' ', '_');
+      final safe = state.deckName.replaceAll(RegExp(r'[^\w\s-]'), '').trim();
       final fileName = '$safe.apkg';
 
       String? savePath;
@@ -34,10 +34,11 @@ class ExportScreen extends StatelessWidget {
       state.saveSettings();
 
       if (context.mounted) {
+        final shortPath = savePath.replaceFirst(Platform.environment['HOME'] ?? '', '~');
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Saved to $savePath'),
+          content: Text('Saved to $shortPath'),
           behavior: SnackBarBehavior.floating,
-          action: SnackBarAction(label: 'OK', onPressed: () {}),
+          duration: const Duration(seconds: 3),
         ));
       }
     } catch (e) {

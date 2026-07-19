@@ -10,7 +10,7 @@ class HistoryScreen extends StatelessWidget {
   Future<void> _redownload(BuildContext context, HistoryEntry entry) async {
     final state = context.read<AppState>();
     try {
-      final safe = entry.deckName.replaceAll(RegExp(r'[^\w\s-]'), '').trim().replaceAll(' ', '_');
+      final safe = entry.deckName.replaceAll(RegExp(r'[^\w\s-]'), '').trim();
       final fileName = '$safe.apkg';
 
       String? savePath;
