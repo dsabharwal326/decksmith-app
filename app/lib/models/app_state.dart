@@ -162,7 +162,8 @@ class AppState extends ChangeNotifier {
     defaultDepth = prefs.getString('defaultDepth') ?? 'full';
     anthropicApiKey = prefs.getString('anthropicApiKey') ?? '';
     openaiApiKey = prefs.getString('openaiApiKey') ?? '';
-    backendPath = prefs.getString('backendPath') ?? _defaultBackendPath();
+    final savedPath = prefs.getString('backendPath') ?? '';
+    backendPath = savedPath.isNotEmpty ? savedPath : _defaultBackendPath();
     viewMode = ViewMode.values.firstWhere(
       (v) => v.name == (prefs.getString('viewMode') ?? 'hybrid'),
       orElse: () => ViewMode.hybrid,
@@ -186,16 +187,11 @@ class AppState extends ChangeNotifier {
   }
 
   static String _defaultBackendPath() {
-    // Reasonable defaults for dev setup
+    // macOS sandbox may block existsSync on ~/Documents; return the most
+    // likely path unconditionally and let the launcher handle failure.
     final home = Platform.environment['HOME'] ?? '';
-    final candidates = [
-      '$home/Documents/Anki Generator/api.py',
-      '$home/decksmith/api.py',
-    ];
-    for (final c in candidates) {
-      if (File(c).existsSync()) return c;
-    }
-    return '';
+    if (home.isEmpty) return '';
+    return '$home/Documents/Anki Generator/api.py';
   }
 
   void setClassify(bool v) {
