@@ -122,28 +122,37 @@ class BackendLauncher {
   }
 
   static Future<String?> _findPython() async {
-    // Try shell PATH first (works when launched from terminal)
-    for (final candidate in ['python3', 'python']) {
-      try {
-        final res = await Process.run('which', [candidate],
-            environment: {'PATH': _extendedPath()});
-        if (res.exitCode == 0) {
-          final path = (res.stdout as String).trim();
-          if (path.isNotEmpty) return path;
-        }
-      } catch (_) {}
-    }
-    // Absolute fallbacks for GUI apps where PATH is minimal
-    const candidates = [
+    // Collect candidates — Framework / Homebrew before system stubs
+    final candidates = <String>[
       '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3',
       '/Library/Frameworks/Python.framework/Versions/3.12/bin/python3',
       '/Library/Frameworks/Python.framework/Versions/3.11/bin/python3',
       '/opt/homebrew/bin/python3',
       '/usr/local/bin/python3',
-      '/usr/bin/python3',
     ];
+
+    // Also collect whatever `which python3` finds via extended PATH
+    for (final cmd in ['python3', 'python']) {
+      try {
+        final res = await Process.run('which', [cmd],
+            environment: {'PATH': _extendedPath()});
+        if (res.exitCode == 0) {
+          final p = (res.stdout as String).trim();
+          if (p.isNotEmpty && !candidates.contains(p)) candidates.add(p);
+        }
+      } catch (_) {}
+    }
+
+    // Return first candidate that actually has uvicorn installed
     for (final p in candidates) {
-      if (File(p).existsSync()) return p;
+      if (!File(p).existsSync()) continue;
+      try {
+        final res = await Process.run(p, ['-c', 'import uvicorn']);
+        if (res.exitCode == 0) {
+          _log('using python: $p');
+          return p;
+        }
+      } catch (_) {}
     }
     return null;
   }
