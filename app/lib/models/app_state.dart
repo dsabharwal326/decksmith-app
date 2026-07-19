@@ -1,17 +1,26 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/backend_launcher.dart';
 
-enum AppPhase { idle, processing, results, exporting }
+export '../services/backend_launcher.dart' show BackendStatus;
+
+enum AppPhase { idle, processing, review, exporting }
 
 enum SidebarPage { upload, topic, enhance, history, settings }
 
+enum ViewMode { compact, hybrid, full }
+
 class NoteModel {
   final String noteType;
-  final String front;
-  final String back;
-  final String extra;
-  final List<String> tags;
-  NoteModel({required this.noteType, required this.front, required this.back, required this.extra, required this.tags});
+  String front;
+  String back;
+  String extra;
+  List<String> tags;
+  final String? guid;
+  NoteModel({required this.noteType, required this.front, required this.back, required this.extra, required this.tags, this.guid});
 
   factory NoteModel.fromJson(Map<String, dynamic> j) => NoteModel(
     noteType: j['note_type'] ?? 'basic',
@@ -19,6 +28,16 @@ class NoteModel {
     back: j['back'] ?? '',
     extra: j['extra'] ?? '',
     tags: List<String>.from(j['tags'] ?? []),
+    guid: j['guid'] as String?,
+  );
+
+  NoteModel copyWith({String? front, String? back, String? extra, List<String>? tags}) => NoteModel(
+    noteType: noteType,
+    front: front ?? this.front,
+    back: back ?? this.back,
+    extra: extra ?? this.extra,
+    tags: tags ?? this.tags,
+    guid: guid,
   );
 }
 
@@ -44,7 +63,8 @@ class HistoryEntry {
   final int cardCount;
   final DateTime date;
   final Uint8List apkgData;
-  HistoryEntry({required this.deckName, required this.cardCount, required this.date, required this.apkgData});
+  final String? filePath;
+  HistoryEntry({required this.deckName, required this.cardCount, required this.date, required this.apkgData, this.filePath});
 }
 
 class AppState extends ChangeNotifier {
@@ -76,29 +96,106 @@ class AppState extends ChangeNotifier {
   int dupesSkipped = 0;
 
   List<HistoryEntry> history = [];
+  String? activeJobId;
 
+  // ── Settings ──────────────────────────────────────────────────────────────
   String apiBaseURL = 'http://localhost:8503';
-  String serviceKey = '';
+  // serviceKey is always 'decksmith' — invisible to users
+  final String serviceKey = 'decksmith';
   String selectedProvider = 'anthropic';
+  String defaultOutputPath = '';
+  String lastPickerPath = '';
+  String defaultOllamaModel = 'mistral';
+  String defaultDepth = 'full';
+  ViewMode viewMode = ViewMode.hybrid;
+
+  // ── API keys (passed as request headers → backend) ────────────────────────
+  String anthropicApiKey = '';
+  String openaiApiKey = '';
+
+  // ── Backend auto-launch ───────────────────────────────────────────────────
+  String backendPath = '';   // path to api.py; empty = don't auto-launch
+  BackendStatus backendStatus = BackendStatus.unknown;
+  late final BackendLauncher _launcher;
 
   AppState() {
-    _loadSettings();
+    _launcher = BackendLauncher(onStatusChanged: (s) {
+      backendStatus = s;
+      notifyListeners();
+    });
+    _loadSettings().then((_) => _startBackendIfNeeded());
+    _loadHistory();
+  }
+
+  Future<void> _startBackendIfNeeded() async {
+    await _launcher.ensureRunning(
+      baseUrl: apiBaseURL,
+      backendPath: backendPath,
+      anthropicApiKey: anthropicApiKey,
+      openaiApiKey: openaiApiKey,
+    );
+  }
+
+  Future<void> launchBackend() => _launcher.launch(
+    baseUrl: apiBaseURL,
+    backendPath: backendPath,
+    anthropicApiKey: anthropicApiKey,
+    openaiApiKey: openaiApiKey,
+  );
+
+  Future<void> stopBackend() => _launcher.stop();
+
+  Future<void> refreshBackendStatus() async {
+    final alive = await _launcher.checkHealth(apiBaseURL);
+    backendStatus = alive ? BackendStatus.running : BackendStatus.offline;
+    notifyListeners();
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    apiBaseURL = prefs.getString('apiBaseURL') ?? 'http://localhost:8503';
-    serviceKey = prefs.getString('serviceKey') ?? '';
+    final savedURL = prefs.getString('apiBaseURL') ?? '';
+    apiBaseURL = savedURL.isNotEmpty ? savedURL : 'http://localhost:8503';
     selectedProvider = prefs.getString('selectedProvider') ?? 'anthropic';
+    defaultOutputPath = prefs.getString('defaultOutputPath') ?? '';
+    lastPickerPath = prefs.getString('lastPickerPath') ?? '';
+    defaultOllamaModel = prefs.getString('defaultOllamaModel') ?? 'mistral';
+    defaultDepth = prefs.getString('defaultDepth') ?? 'full';
+    anthropicApiKey = prefs.getString('anthropicApiKey') ?? '';
+    openaiApiKey = prefs.getString('openaiApiKey') ?? '';
+    backendPath = prefs.getString('backendPath') ?? _defaultBackendPath();
+    viewMode = ViewMode.values.firstWhere(
+      (v) => v.name == (prefs.getString('viewMode') ?? 'hybrid'),
+      orElse: () => ViewMode.hybrid,
+    );
     notifyListeners();
   }
 
   Future<void> saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('apiBaseURL', apiBaseURL);
-    await prefs.setString('serviceKey', serviceKey);
     await prefs.setString('selectedProvider', selectedProvider);
+    await prefs.setString('defaultOutputPath', defaultOutputPath);
+    await prefs.setString('lastPickerPath', lastPickerPath);
+    await prefs.setString('defaultOllamaModel', defaultOllamaModel);
+    await prefs.setString('defaultDepth', defaultDepth);
+    await prefs.setString('anthropicApiKey', anthropicApiKey);
+    await prefs.setString('openaiApiKey', openaiApiKey);
+    await prefs.setString('backendPath', backendPath);
+    await prefs.setString('viewMode', viewMode.name);
     notifyListeners();
+  }
+
+  static String _defaultBackendPath() {
+    // Reasonable defaults for dev setup
+    final home = Platform.environment['HOME'] ?? '';
+    final candidates = [
+      '$home/Documents/Anki Generator/api.py',
+      '$home/decksmith/api.py',
+    ];
+    for (final c in candidates) {
+      if (File(c).existsSync()) return c;
+    }
+    return '';
   }
 
   void setClassify(bool v) {
@@ -122,24 +219,83 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setResults({required List<NoteModel> notes, required List<ValidationResult> validation, required int cards, required List<Map<String, dynamic>> subdecks}) {
+  void setReview({
+    required List<NoteModel> notes,
+    required List<ValidationResult> validation,
+  }) {
     parsedNotes = notes;
     validationResults = validation;
-    totalCards = cards;
-    subdeckCounts = subdecks;
-    phase = AppPhase.results;
+    totalCards = notes.length;
+    phase = AppPhase.review;
     notifyListeners();
   }
 
-  void setApkg(Uint8List data) {
+  void setApkg(Uint8List data, {int dupesRemovedInBuild = 0}) {
     builtApkgData = data;
+    activeJobId = null;
+    dupesSkipped += dupesRemovedInBuild;
     phase = AppPhase.exporting;
-    history.insert(0, HistoryEntry(deckName: deckName, cardCount: totalCards, date: DateTime.now(), apkgData: data));
+    final entry = HistoryEntry(
+      deckName: deckName,
+      cardCount: totalCards,
+      date: DateTime.now(),
+      apkgData: data,
+    );
+    history.insert(0, entry);
+    _persistHistoryEntry(entry);
     notifyListeners();
+  }
+
+  Future<void> _persistHistoryEntry(HistoryEntry entry) async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final histDir = Directory('${dir.path}/decksmith/history');
+      await histDir.create(recursive: true);
+      final ts = entry.date.millisecondsSinceEpoch;
+      final safe = entry.deckName.replaceAll(RegExp(r'[^\w]'), '_');
+      final entryDir = Directory('${histDir.path}/${ts}_$safe');
+      await entryDir.create();
+      await File('${entryDir.path}/deck.apkg').writeAsBytes(entry.apkgData);
+      await File('${entryDir.path}/meta.json').writeAsString(jsonEncode({
+        'deckName': entry.deckName,
+        'cardCount': entry.cardCount,
+        'date': entry.date.toIso8601String(),
+      }));
+    } catch (_) {}
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final histDir = Directory('${dir.path}/decksmith/history');
+      if (!await histDir.exists()) return;
+      final entries = <HistoryEntry>[];
+      await for (final entity in histDir.list()) {
+        if (entity is! Directory) continue;
+        final metaFile = File('${entity.path}/meta.json');
+        final apkgFile = File('${entity.path}/deck.apkg');
+        if (!await metaFile.exists() || !await apkgFile.exists()) continue;
+        try {
+          final meta = jsonDecode(await metaFile.readAsString()) as Map;
+          final data = await apkgFile.readAsBytes();
+          entries.add(HistoryEntry(
+            deckName: meta['deckName'] as String,
+            cardCount: meta['cardCount'] as int,
+            date: DateTime.parse(meta['date'] as String),
+            apkgData: data,
+            filePath: apkgFile.path,
+          ));
+        } catch (_) {}
+      }
+      entries.sort((a, b) => b.date.compareTo(a.date));
+      history = entries;
+      notifyListeners();
+    } catch (_) {}
   }
 
   void setError(String msg) {
     errorMessage = msg;
+    activeJobId = null;
     phase = AppPhase.idle;
     notifyListeners();
   }
@@ -167,6 +323,7 @@ class AppState extends ChangeNotifier {
     processingStatus = '';
     processingProgress = 0;
     dupesSkipped = 0;
+    activeJobId = null;
     phase = AppPhase.idle;
     notifyListeners();
   }
