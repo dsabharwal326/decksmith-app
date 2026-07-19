@@ -1,10 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set
 import hashlib
 import re
 import genanki
+
+try:
+    import ftfy as _ftfy
+    def _fix_encoding(text: str) -> str:
+        return _ftfy.fix_text(text)
+except ImportError:
+    def _fix_encoding(text: str) -> str:  # type: ignore[misc]
+        try:
+            return text.encode('latin-1').decode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return text
 
 
 # =========================
@@ -32,6 +43,7 @@ class Note:
     back: str
     extra: str = ""
     tags: Tuple[str, ...] = field(default_factory=tuple)
+    guid: Optional[str] = None  # preserved from source .apkg for update-in-place imports
 
     def __post_init__(self):
         object.__setattr__(self, "tags", tuple(sorted(self.tags)))
@@ -112,6 +124,7 @@ def _validate_note(note: Note) -> None:
 def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
     notes: List[Note] = []
 
+    text = _fix_encoding(text)
     lines = text.splitlines()
     cloze_buffer: List[str] = []
     collecting_cloze = False
@@ -252,6 +265,16 @@ def _subdeck_name(note: Note, root: str) -> str:
 # ENGINE ENTRY
 # =========================
 
+def _html_extra(text: str) -> str:
+    """Convert plain-text extra content to safe HTML for Anki fields."""
+    import re as _re
+    # If text already has HTML tags, leave it alone (e.g. image HTML from wikimedia)
+    if _re.search(r"<\s*\w+[^>]*>", text):
+        return text
+    # Plain text: escape bare < > and convert newlines to <br>
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+
+
 def build_deck(notes: List[Note], deck_name: str, strict_repair: bool) -> BuildResult:
     root_id = _deck_id(deck_name)
     root_deck = genanki.Deck(root_id, deck_name)
@@ -277,13 +300,16 @@ def build_deck(notes: List[Note], deck_name: str, strict_repair: bool) -> BuildR
         used_model_ids.add(model.model_id)
 
         if note.note_type == "cloze":
-            fields = [note.front, note.extra]
+            fields = [note.front, _html_extra(note.extra)]
         elif note.note_type in {"basic", "basic_reverse"}:
             fields = [note.front, note.back]
         else:
-            fields = [note.front, note.back, note.extra]
+            fields = [note.front, note.back, _html_extra(note.extra)]
 
-        genanki_note = genanki.Note(model=model, fields=fields, tags=list(note.tags))
+        genanki_kwargs: dict = {"model": model, "fields": fields, "tags": list(note.tags)}
+        if note.guid:
+            genanki_kwargs["guid"] = note.guid
+        genanki_note = genanki.Note(**genanki_kwargs)
 
         subdeck_name = _subdeck_name(note, deck_name)
         if subdeck_name not in subdecks:
