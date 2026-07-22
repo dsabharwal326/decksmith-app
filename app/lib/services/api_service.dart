@@ -44,7 +44,19 @@ class EnhancementOptions {
     this.ollamaModel = 'mistral',
     this.anthropicModel = 'claude-haiku-4-5-20251001',
     this.openaiModel = 'gpt-4o-mini',
+    this.cardStyle = 'cheesy_dorian',
   });
+
+  String cardStyle; // none | cheesy_dorian | anking | zanki | lightyear | brosencephalon
+
+  static const cardStyles = [
+    ('cheesy_dorian', 'Cheesy Dorian — clinical scenario cloze'),
+    ('anking',        'AnKing — atomic, one-fact cloze'),
+    ('zanki',         'Zanki — ultra-atomic, high volume'),
+    ('lightyear',     'Lightyear — concept-relationship'),
+    ('brosencephalon','Brosencephalon — textbook dense'),
+    ('none',          'No style rewrite — enrich only'),
+  ];
 
   Map<String, dynamic> toJson() => {
     'combine_cards': combineCards,
@@ -59,6 +71,7 @@ class EnhancementOptions {
     'ollama_model': ollamaModel,
     'anthropic_model': anthropicModel,
     'openai_model': openaiModel,
+    'card_style': cardStyle,
   };
 }
 
@@ -130,15 +143,107 @@ class ApiService {
     return (bytes: res.bodyBytes, dupesRemoved: dupesRemoved);
   }
 
-  Future<List<NoteModel>> generateTopic({required String topic, required String specialty, required int count}) async {
+  Future<List<NoteModel>> generateTopic({
+    required String topic,
+    required String specialty,
+    required int count,
+    required String cardStyle,
+    required String usmleStep,
+    required String clozeDensity,
+    String tagPrefix = '',
+    String excludeTopics = '',
+    bool mnemonics = false,
+  }) async {
     final res = await http.post(
       Uri.parse('$_base/topic/generate'),
       headers: _headers,
-      body: jsonEncode({'topic': topic, 'specialty': specialty, 'count': count, 'provider': state.selectedProvider}),
-    ).timeout(const Duration(seconds: 120));
+      body: jsonEncode({
+        'topic': topic, 'specialty': specialty, 'card_count': count,
+        'provider': state.selectedProvider, 'card_style': cardStyle,
+        'usmle_step': usmleStep, 'cloze_density': clozeDensity,
+        'tag_prefix': tagPrefix, 'exclude_topics': excludeTopics,
+        'mnemonics': mnemonics,
+      }),
+    ).timeout(const Duration(seconds: 180));
     _check(res);
     final data = jsonDecode(res.body) as Map;
     return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
+  }
+
+  Future<NoteModel?> regenerateCard({
+    required String front,
+    required String topic,
+    String specialty = '',
+    String cardStyle = 'none',
+    String usmleStep = 'step1',
+  }) async {
+    final res = await http.post(
+      Uri.parse('$_base/topic/regenerate_card'),
+      headers: _headers,
+      body: jsonEncode({
+        'front': front, 'topic': topic, 'specialty': specialty.isEmpty ? null : specialty,
+        'card_style': cardStyle, 'usmle_step': usmleStep,
+      }),
+    ).timeout(const Duration(seconds: 60));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    final n = data['note'];
+    if (n == null) return null;
+    return NoteModel.fromJson(n as Map<String, dynamic>);
+  }
+
+  Future<({Uint8List bytes, int totalNotes, int dupeCount})> mergeDeck({
+    required Uint8List apkgA,
+    required Uint8List apkgB,
+    required String deckName,
+    bool classify = true,
+  }) async {
+    final res = await http.post(
+      Uri.parse('$_base/deck/merge'),
+      headers: _headers,
+      body: jsonEncode({
+        'apkg_a_b64': base64Encode(apkgA),
+        'apkg_b_b64': base64Encode(apkgB),
+        'deck_name': deckName,
+        'classify': classify,
+      }),
+    ).timeout(const Duration(seconds: 60));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    final bytes = base64Decode(data['apkg_b64'] as String);
+    return (
+      bytes: Uint8List.fromList(bytes),
+      totalNotes: (data['total_notes'] as num).toInt(),
+      dupeCount: (data['duplicate_count'] as num).toInt(),
+    );
+  }
+
+  Future<String> detectStep(String text) async {
+    final res = await http.post(
+      Uri.parse('$_base/detect/step'),
+      headers: _headers,
+      body: jsonEncode({'text': text}),
+    ).timeout(const Duration(seconds: 10));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    return data['step'] as String;
+  }
+
+  Future<String> notesToText(List<NoteModel> notes) async {
+    // Convert client-side using the same Decksmith format — no round-trip needed
+    final buf = StringBuffer();
+    for (final n in notes) {
+      if (n.noteType == 'cloze') {
+        buf.writeln(n.extra.isNotEmpty ? '${n.front} ||| ${n.extra}' : n.front);
+      } else if (n.noteType == 'basic_reverse') {
+        buf.writeln('${n.front} || ${n.back}');
+      } else if (n.noteType == 'basic_extra') {
+        buf.writeln('${n.front} ||| ${n.back} ||| ${n.extra}');
+      } else {
+        buf.writeln('${n.front} :: ${n.back}');
+      }
+    }
+    return buf.toString();
   }
 
   Future<bool> cancelJob(String jobId) async {

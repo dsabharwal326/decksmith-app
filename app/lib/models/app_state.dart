@@ -9,7 +9,7 @@ export '../services/backend_launcher.dart' show BackendStatus;
 
 enum AppPhase { idle, processing, review, exporting }
 
-enum SidebarPage { upload, topic, enhance, history, settings }
+enum SidebarPage { upload, topic, enhance, merge, history, settings }
 
 enum ViewMode { compact, hybrid, full }
 
@@ -102,12 +102,14 @@ class AppState extends ChangeNotifier {
   String apiBaseURL = 'http://localhost:8503';
   // serviceKey is always 'decksmith' — invisible to users
   final String serviceKey = 'decksmith';
-  String selectedProvider = 'anthropic';
+  String selectedProvider = 'ollama';
   String defaultOutputPath = '';
   String lastPickerPath = '';
   String defaultOllamaModel = 'mistral';
   String defaultDepth = 'full';
-  ViewMode viewMode = ViewMode.hybrid;
+  ViewMode _viewMode = ViewMode.hybrid;
+  ViewMode get viewMode => _viewMode;
+  set viewMode(ViewMode v) { _viewMode = v; notifyListeners(); }
 
   // ── API keys (passed as request headers → backend) ────────────────────────
   String anthropicApiKey = '';
@@ -155,7 +157,7 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final savedURL = prefs.getString('apiBaseURL') ?? '';
     apiBaseURL = savedURL.isNotEmpty ? savedURL : 'http://localhost:8503';
-    selectedProvider = prefs.getString('selectedProvider') ?? 'anthropic';
+    selectedProvider = prefs.getString('selectedProvider') ?? 'ollama';
     defaultOutputPath = prefs.getString('defaultOutputPath') ?? '';
     lastPickerPath = prefs.getString('lastPickerPath') ?? '';
     defaultOllamaModel = prefs.getString('defaultOllamaModel') ?? 'mistral';
@@ -164,7 +166,7 @@ class AppState extends ChangeNotifier {
     openaiApiKey = prefs.getString('openaiApiKey') ?? '';
     final savedPath = prefs.getString('backendPath') ?? '';
     backendPath = savedPath.isNotEmpty ? savedPath : _defaultBackendPath();
-    viewMode = ViewMode.values.firstWhere(
+    _viewMode = ViewMode.values.firstWhere(
       (v) => v.name == (prefs.getString('viewMode') ?? 'hybrid'),
       orElse: () => ViewMode.hybrid,
     );

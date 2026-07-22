@@ -1,4 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../models/app_state.dart';
 import '../services/api_service.dart';
@@ -23,6 +25,23 @@ class _ReviewScreenState extends State<ReviewScreen> {
       provider: s.selectedProvider,
       ollamaModel: s.defaultOllamaModel,
     );
+  }
+
+  Future<void> _exportText(AppState state) async {
+    final api = ApiService(state);
+    final text = await api.notesToText(state.parsedNotes);
+    final savePath = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save cards as text',
+      fileName: '${state.deckName.replaceAll(' ', '_')}.txt',
+    );
+    if (savePath == null) return;
+    await File(savePath).writeAsString(text, flush: true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Saved ${state.parsedNotes.length} cards to ${savePath.split('/').last}'),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
   }
 
   Future<void> _build() async {
@@ -111,6 +130,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
               ]),
               const Spacer(),
+              IconButton(
+                onPressed: () => _exportText(state),
+                icon: const Icon(Icons.download_rounded, size: 20),
+                tooltip: 'Export as .txt',
+                visualDensity: VisualDensity.compact,
+              ),
+              const SizedBox(width: 4),
               OutlinedButton.icon(
                 onPressed: state.reset,
                 icon: const Icon(Icons.arrow_back_rounded, size: 16),
@@ -133,6 +159,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
               hasError: errors.any((e) => e.index == i),
               errorText: errors.firstWhere((e) => e.index == i,
                   orElse: () => ValidationResult(index: i, status: '', error: '', fixDescription: '')).error,
+              deckTopic: state.deckName,
               onEdit: (updated) {
                 setState(() => state.parsedNotes[i] = updated);
               },
@@ -229,14 +256,39 @@ class _CardTile extends StatefulWidget {
   final String errorText;
   final ValueChanged<NoteModel> onEdit;
   final VoidCallback onDelete;
+  final String deckTopic;
   const _CardTile({required this.note, required this.index, required this.hasError,
-    required this.errorText, required this.onEdit, required this.onDelete});
+    required this.errorText, required this.onEdit, required this.onDelete,
+    this.deckTopic = ''});
   @override
   State<_CardTile> createState() => _CardTileState();
 }
 
 class _CardTileState extends State<_CardTile> {
   bool _expanded = false;
+  bool _regenerating = false;
+
+  Future<void> _regenerate() async {
+    setState(() => _regenerating = true);
+    try {
+      final state = context.read<AppState>();
+      final api = ApiService(state);
+      final updated = await api.regenerateCard(
+        front: widget.note.front,
+        topic: widget.deckTopic.isNotEmpty ? widget.deckTopic : widget.note.front,
+      );
+      if (updated != null) widget.onEdit(updated);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _regenerating = false);
+    }
+  }
 
   Future<void> _showEditor() async {
     final updated = await showDialog<NoteModel>(
@@ -366,6 +418,17 @@ class _CardTileState extends State<_CardTile> {
                         ),
                       ),
                       const SizedBox(width: 8),
+                      if (_regenerating)
+                        const SizedBox(width: 28, height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      else
+                        IconButton(
+                          onPressed: _regenerate,
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          tooltip: 'Regenerate this card',
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      const SizedBox(width: 4),
                       FilledButton.tonalIcon(
                         onPressed: _showEditor,
                         icon: const Icon(Icons.edit_rounded, size: 16),
@@ -523,6 +586,13 @@ class _CompactEnhanceOptions extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Style row
+          Row(children: [
+            Text('Style:', style: tt.labelSmall?.copyWith(color: cs.onSurfaceVariant)),
+            const SizedBox(width: 6),
+            _StylePill(opts: opts, onChanged: onChanged, cs: cs, tt: tt),
+          ]),
+          const SizedBox(height: 8),
           // Provider + depth row
           Row(children: [
             _Pill(
@@ -544,7 +614,7 @@ class _CompactEnhanceOptions extends StatelessWidget {
             ),
           ]),
           const SizedBox(height: 8),
-          // Content toggles
+          // Content toggles (only relevant when style is 'none' — enrichment-only)
           Wrap(spacing: 6, runSpacing: 6, children: [
             _TogglePill(label: 'Clinical', active: opts.addClinicalContext,
               onTap: () { opts.addClinicalContext = !opts.addClinicalContext; onChanged(); }, cs: cs, tt: tt),
@@ -583,6 +653,82 @@ class _CompactEnhanceOptions extends StatelessWidget {
     'overwrite'  => 'Overwrite',
     _            => 'Append',
   };
+}
+
+class _StylePill extends StatelessWidget {
+  final EnhancementOptions opts;
+  final VoidCallback onChanged;
+  final ColorScheme cs;
+  final TextTheme tt;
+  const _StylePill({required this.opts, required this.onChanged, required this.cs, required this.tt});
+
+  String _label(String style) => switch (style) {
+    'cheesy_dorian'  => 'Cheesy Dorian',
+    'anking'         => 'AnKing',
+    'zanki'          => 'Zanki',
+    'lightyear'      => 'Lightyear',
+    'brosencephalon' => 'Brosencephalon',
+    _                => 'Enrich only',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final styles = EnhancementOptions.cardStyles.map((e) => e.$1).toList();
+    return GestureDetector(
+      onTapDown: (details) async {
+        final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+        final box = context.findRenderObject() as RenderBox;
+        final offset = box.localToGlobal(Offset.zero, ancestor: overlay);
+        final result = await showMenu<String>(
+          context: context,
+          position: RelativeRect.fromLTRB(
+            offset.dx, offset.dy + box.size.height + 4,
+            offset.dx + 200, offset.dy + box.size.height + 4 + 300,
+          ),
+          items: EnhancementOptions.cardStyles.map((e) => PopupMenuItem(
+            value: e.$1,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(e.$1 == 'none' ? 'Enrich only' : e.$1.replaceAll('_', ' ').split(' ').map((w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1)}').join(' '),
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    fontWeight: e.$1 == opts.cardStyle ? FontWeight.w700 : FontWeight.normal,
+                  )),
+                Text(e.$2.split('—').last.trim(),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 11,
+                  )),
+              ],
+            ),
+          )).toList(),
+        );
+        if (result != null) { opts.cardStyle = result; onChanged(); }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: opts.cardStyle != 'none'
+              ? cs.primaryContainer
+              : cs.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: opts.cardStyle != 'none' ? cs.primary : cs.outlineVariant,
+          ),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(_label(opts.cardStyle),
+            style: tt.labelSmall?.copyWith(
+              color: opts.cardStyle != 'none' ? cs.onPrimaryContainer : cs.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            )),
+          const SizedBox(width: 4),
+          Icon(Icons.arrow_drop_down_rounded, size: 14,
+            color: opts.cardStyle != 'none' ? cs.onPrimaryContainer : cs.onSurfaceVariant),
+        ]),
+      ),
+    );
+  }
 }
 
 class _Pill extends StatelessWidget {

@@ -19,11 +19,35 @@ class _UploadScreenState extends State<UploadScreen> {
   bool _draggingApkg = false;
   bool _isPdf = false;
   bool _isImage = false;
+  bool _skipDupes = false;
+  String? _detectedStep;   // null = not yet detected
 
   @override
   void dispose() {
     _deckNameCtrl.dispose();
     super.dispose();
+  }
+
+  String _stepLabel(String step) => switch (step) {
+    'step1' => 'USMLE Step 1 — Basic sciences',
+    'step2' => 'USMLE Step 2 CK — Clinical knowledge',
+    'step3' => 'USMLE Step 3 — Patient management',
+    _ => step,
+  };
+
+  Future<void> _detectStep(String textSample) async {
+    try {
+      final state = context.read<AppState>();
+      final step = await ApiService(state).detectStep(textSample);
+      if (mounted) setState(() => _detectedStep = step);
+    } catch (_) {}
+  }
+
+  void _suggestDeckName(String fileName) {
+    final base = fileName.contains('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+    final cleaned = base.replaceAll(RegExp(r'[_\-\.]+'), ' ').trim();
+    final titled = cleaned.split(' ').map((w) => w.isEmpty ? '' : w[0].toUpperCase() + w.substring(1)).join(' ');
+    if (titled.isNotEmpty) _deckNameCtrl.text = titled;
   }
 
   Future<void> _pickCardFile() async {
@@ -49,7 +73,9 @@ class _UploadScreenState extends State<UploadScreen> {
       state.cardText = await File(path).readAsString();
     }
     if (!mounted) return;
-    setState(() { _fileName = file.name; _isPdf = isPdf; _isImage = isImage; });
+    setState(() { _fileName = file.name; _isPdf = isPdf; _isImage = isImage; _detectedStep = null; });
+    _suggestDeckName(file.name);
+    if (!isPdf && !isImage) _detectStep(state.cardText.substring(0, state.cardText.length.clamp(0, 2000)));
   }
 
   Future<void> _pickApkg() async {
@@ -99,7 +125,7 @@ class _UploadScreenState extends State<UploadScreen> {
         notes = await api.parseCards(state.cardText);
       }
 
-      if (state.existingApkgBytes != null) {
+      if (_skipDupes && state.existingApkgBytes != null) {
         state.setProgress('Checking for duplicates…', 0.4);
         final dedupeResult = await api.dedupe(apkgBytes: state.existingApkgBytes!, notes: notes);
         notes = (dedupeResult['new_notes'] as List)
@@ -138,9 +164,9 @@ class _UploadScreenState extends State<UploadScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Upload cards', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
+            Text('Generate from file', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text('Drop a .txt, .csv, .pdf, or image file',
+            Text('Drop a .txt, .csv, .pdf, or image to create Anki cards',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             const SizedBox(height: 24),
 
@@ -160,14 +186,18 @@ class _UploadScreenState extends State<UploadScreen> {
                     const SnackBar(content: Text('Drop a .txt, .csv, .pdf, or image file'), behavior: SnackBarBehavior.floating));
                   return;
                 }
+                final st = context.read<AppState>();
                 if (isPdf || isImage) {
-                  context.read<AppState>().cardText = path;
+                  st.cardText = path;
                 } else {
                   final bytes = await File(path).readAsBytes();
-                  context.read<AppState>().cardText = String.fromCharCodes(bytes);
+                  st.cardText = String.fromCharCodes(bytes);
                 }
                 if (!mounted) return;
-                setState(() { _fileName = path.split('/').last; _isPdf = isPdf; _isImage = isImage; });
+                final name = path.split('/').last;
+                setState(() { _fileName = name; _isPdf = isPdf; _isImage = isImage; _detectedStep = null; });
+                _suggestDeckName(name);
+                if (!isPdf && !isImage) _detectStep(st.cardText.substring(0, st.cardText.length.clamp(0, 2000)));
               },
               child: GestureDetector(
                 onTap: _pickCardFile,
@@ -228,6 +258,27 @@ class _UploadScreenState extends State<UploadScreen> {
               ),
             ),
 
+            if (_detectedStep != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: cs.tertiaryContainer.withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: cs.tertiary.withOpacity(0.4)),
+                ),
+                child: Row(children: [
+                  Icon(Icons.school_rounded, size: 16, color: cs.tertiary),
+                  const SizedBox(width: 8),
+                  Text('Detected scope: ${_stepLabel(_detectedStep!)}',
+                    style: tt.bodySmall?.copyWith(
+                      color: cs.onTertiaryContainer,
+                      fontWeight: FontWeight.w600,
+                    )),
+                ]),
+              ),
+            ],
+
             const SizedBox(height: 24),
 
             // ── Deck name ──────────────────────────────────────────────
@@ -263,8 +314,15 @@ class _UploadScreenState extends State<UploadScreen> {
               const SizedBox(width: 8),
               Text('Skip duplicates', style: tt.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
               const Spacer(),
-              Text('optional', style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+              Switch(
+                value: _skipDupes,
+                onChanged: (v) {
+                  setState(() => _skipDupes = v);
+                  if (!v) state.clearExistingApkg();
+                },
+              ),
             ]),
+            if (_skipDupes) ...[
             const SizedBox(height: 6),
             Text(
               'Import an existing .apkg — cards already in that deck will be skipped.',
@@ -322,6 +380,7 @@ class _UploadScreenState extends State<UploadScreen> {
                         : 'Import existing deck (.apkg)'),
               ),
             ),
+            ], // end if (_skipDupes)
 
             const SizedBox(height: 20),
 

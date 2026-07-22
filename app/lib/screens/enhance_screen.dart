@@ -215,6 +215,24 @@ class _EnhanceScreenState extends State<EnhanceScreen> with AutomaticKeepAliveCl
 
             const SizedBox(height: 24),
 
+            // ── Card style ─────────────────────────────────────────────
+            _Label(icon: Icons.style_rounded, text: 'Card style'),
+            const SizedBox(height: 8),
+            _SegmentPicker<String>(
+              options: const [
+                ('cheesy_dorian',  'Cheesy Dorian'),
+                ('anking',         'AnKing'),
+                ('zanki',          'Zanki'),
+                ('lightyear',      'Lightyear'),
+                ('brosencephalon', 'Brosencephalon'),
+                ('none',           'Enrich only'),
+              ],
+              value: _opts.cardStyle,
+              onChanged: (v) => setState(() => _opts.cardStyle = v),
+            ),
+
+            const SizedBox(height: 20),
+
             // ── Content toggles ────────────────────────────────────────
             _Label(icon: Icons.auto_awesome_rounded, text: 'Add to cards'),
             const SizedBox(height: 8),
