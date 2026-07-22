@@ -20,7 +20,8 @@ SCHEMA_REGISTRY: Dict[str, Dict] = {
             "normal_vs_pathologic",
         },
         "field_map": {
-            "back": [
+            "back": [],
+            "extra": [
                 "primary_concept",
                 "mechanism",
                 "high_yield_points",
@@ -28,7 +29,6 @@ SCHEMA_REGISTRY: Dict[str, Dict] = {
                 "exam_trap",
                 "normal_vs_pathologic",
             ],
-            "extra": [],
         },
     }
 }

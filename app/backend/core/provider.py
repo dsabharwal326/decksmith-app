@@ -2,13 +2,13 @@
 Provider abstraction layer.
 
 All AI calls in Decksmith go through here. The rest of the codebase
-never imports an SDK directly — it calls complete() or complete_structured()
+never imports an SDK directly - it calls complete() or complete_structured()
 on a Provider instance.
 
 Supported providers:
   - anthropic  (Claude models via anthropic SDK)
   - openai     (GPT models via openai SDK)
-  - stub       (returns canned responses — for tests and offline use)
+  - stub       (returns canned responses - for tests and offline use)
 """
 from __future__ import annotations
 
@@ -98,8 +98,8 @@ class Provider(ABC):
 class AnthropicProvider(Provider):
 
     # Default model tiers
-    INTAKE_MODEL    = "claude-haiku-4-5-20251001"   # fast, cheap — structural fixes
-    AUGMENT_MODEL   = "claude-sonnet-4-6"           # best quality — content enrichment
+    INTAKE_MODEL    = "claude-haiku-4-5-20251001"   # fast, cheap - structural fixes
+    AUGMENT_MODEL   = "claude-haiku-4-5-20251001"   # fast - use haiku for speed on large decks
 
     def __init__(self, api_key: Optional[str] = None):
         try:
@@ -137,6 +137,9 @@ class AnthropicProvider(Provider):
                 messages=[{"role": "user", "content": user}],
             )
         except Exception as e:
+            import traceback as _tb
+            print("PROVIDER EXCEPTION FULL TRACEBACK:")
+            _tb.print_exc()
             _raise_mapped(e)
 
         text = resp.content[0].text if resp.content else ""
@@ -161,7 +164,7 @@ class AnthropicProvider(Provider):
         augmented_system = (
             f"{system}\n\n"
             f"Respond with a single JSON object matching this schema exactly. "
-            f"No prose, no markdown fences — raw JSON only.\n\n"
+            f"No prose, no markdown fences - raw JSON only.\n\n"
             f"Schema:\n{schema_hint}"
         )
         resp = self.complete(
@@ -312,7 +315,7 @@ PROVIDER_NAMES = ("anthropic", "openai", "ollama", "stub")
 
 class OllamaProvider(Provider):
     """
-    Local Ollama provider — no API key, no internet.
+    Local Ollama provider - no API key, no internet.
     Ollama exposes an OpenAI-compatible API at localhost:11434.
     Install: https://ollama.com  then  ollama pull llama3
     """
@@ -359,7 +362,7 @@ class OllamaProvider(Provider):
         augmented_system = (
             f"{system}\n\n"
             f"Respond with a single JSON object matching this schema exactly. "
-            f"No prose, no markdown fences — raw JSON only.\n\nSchema:\n{schema_hint}"
+            f"No prose, no markdown fences - raw JSON only.\n\nSchema:\n{schema_hint}"
         )
         resp = self.complete(system=augmented_system, user=user, model=model, max_tokens=max_tokens, temperature=temperature)
         return StructuredResponse(

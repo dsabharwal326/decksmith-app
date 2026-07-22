@@ -75,7 +75,8 @@ def classify_notes(
                     note.front,
                     note.back,
                     note.extra,
-                    tags=new_tags
+                    tags=new_tags,
+                    guid=note.guid,
                 )
             )
         else:

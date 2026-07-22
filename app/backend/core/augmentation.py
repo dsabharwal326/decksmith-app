@@ -98,9 +98,10 @@ def _validate_payload(
         value = payload_dict.get(section)
 
         if section == "high_yield_points":
-            if not value or not isinstance(value, tuple):
+            # Allow empty tuple when high_yield was intentionally disabled
+            if not isinstance(value, tuple):
                 raise AugmentationValidationError(
-                    "high_yield_points must be non-empty tuple"
+                    "high_yield_points must be a tuple"
                 )
         else:
             if not isinstance(value, str) or not value.strip():
@@ -230,6 +231,7 @@ def augment_notes(
                 new_back,
                 new_extra,
                 note.tags,
+                guid=note.guid,
             )
 
         elif mode.name == "APPEND":
@@ -251,6 +253,7 @@ def augment_notes(
                 combined_back.rstrip(),
                 combined_extra.rstrip(),
                 note.tags,
+                guid=note.guid,
             )
 
         elif mode.name == "EMPTY_ONLY":
@@ -264,6 +267,7 @@ def augment_notes(
                 new_back,
                 new_extra,
                 note.tags,
+                guid=note.guid,
             )
 
         else:
