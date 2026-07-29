@@ -137,12 +137,18 @@ def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
     cloze_buffer: List[str] = []
     collecting_cloze = False
 
+    _block_key_re = re.compile(r'^(TYPE|TEXT|FRONT|BACK|EXTRA|TAGS|NOTETYPE)\s*:', re.IGNORECASE)
+
     for raw_line in lines:
         line = raw_line.rstrip()
 
         if not line.strip():
             cloze_buffer.clear()
             collecting_cloze = False
+            continue
+
+        # Skip card-block metadata lines so they aren't mis-parsed as card content
+        if _block_key_re.match(line.strip()):
             continue
 
         if strict_repair:

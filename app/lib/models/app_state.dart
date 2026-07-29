@@ -167,7 +167,10 @@ class AppState extends ChangeNotifier {
     anthropicApiKey = prefs.getString('anthropicApiKey') ?? '';
     openaiApiKey = prefs.getString('openaiApiKey') ?? '';
     final savedPath = prefs.getString('backendPath') ?? '';
-    backendPath = savedPath.isNotEmpty ? savedPath : _defaultBackendPath();
+    final legacyPath = '${Platform.environment['HOME'] ?? ''}/Documents/Anki Generator/api.py';
+    backendPath = (savedPath.isNotEmpty && savedPath != legacyPath)
+        ? savedPath
+        : _defaultBackendPath();
     _viewMode = ViewMode.values.firstWhere(
       (v) => v.name == (prefs.getString('viewMode') ?? 'hybrid'),
       orElse: () => ViewMode.hybrid,
@@ -196,7 +199,7 @@ class AppState extends ChangeNotifier {
     // likely path unconditionally and let the launcher handle failure.
     final home = Platform.environment['HOME'] ?? '';
     if (home.isEmpty) return '';
-    return '$home/Documents/Anki Generator/api.py';
+    return '$home/code/decksmith/backend/api.py';
   }
 
   void setClassify(bool v) {
