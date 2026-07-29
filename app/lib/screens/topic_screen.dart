@@ -89,7 +89,7 @@ class _TopicScreenState extends State<TopicScreen> {
 
   String _specialty    = 'Any / General';
   int    _count        = 20;
-  String _cardStyle    = 'cheesy_dorian';
+  String _cardStyle    = 'none';
   String _usmleStep    = 'step1';
   String _clozeDensity = 'recommended';
   bool   _mnemonics    = false;
@@ -107,7 +107,7 @@ class _TopicScreenState extends State<TopicScreen> {
     setState(() {
       _specialty    = p.getString('topic_specialty')     ?? 'Any / General';
       _count        = p.getInt('topic_count')            ?? 20;
-      _cardStyle    = p.getString('topic_card_style')    ?? 'cheesy_dorian';
+      _cardStyle    = p.getString('topic_card_style')    ?? 'none';
       _usmleStep    = p.getString('topic_usmle_step')    ?? 'step1';
       _clozeDensity = p.getString('topic_cloze_density') ?? 'recommended';
       _mnemonics    = p.getBool('topic_mnemonics')       ?? false;
