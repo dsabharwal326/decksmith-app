@@ -27,7 +27,7 @@ from fastapi import Depends, FastAPI, HTTPException, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from core.engine import Note, build_deck, parse_text_to_notes
+from core.engine import Note, build_deck, parse_text_to_notes, parse_auto, detect_format
 from core.validator import validate_notes, summary as validator_summary
 from core.classifier import classify_notes
 from core.taxonomy import DEFAULT_TAXONOMY
@@ -443,7 +443,7 @@ def health():
 @app.post("/parse", dependencies=[Depends(_auth)])
 def parse(req: ParseRequest):
     """Parse plain-text card format into a list of notes."""
-    notes = parse_text_to_notes(req.text, strict_repair=req.strict_repair)
+    notes = parse_auto(req.text, strict_repair=req.strict_repair)
     return {"notes": [_from_note(n) for n in notes], "count": len(notes)}
 
 
@@ -590,8 +590,7 @@ def topic_regenerate_card(req: RegenerateCardRequest, provider: Provider = Depen
     try:
         resp = provider.complete(system=system, user=user_prompt,
                                  model=_augment_model(), max_tokens=300, temperature=0.5)
-        from core.engine import parse_text_to_notes
-        notes = parse_text_to_notes(resp.text.strip(), strict_repair=False)
+        notes = parse_auto(resp.text.strip(), strict_repair=False)
         note = notes[0] if notes else None
     except Exception as e:
         raise HTTPException(502, f"Regeneration failed: {e}")
@@ -995,7 +994,7 @@ def import_pdf(req: PdfImportRequest):
         full_text = "\n\n".join(pages)
         if not full_text.strip():
             raise HTTPException(422, "No text could be extracted from this PDF. It may be a scanned image — try image import instead.")
-        notes = parse_text_to_notes(full_text)
+        notes = parse_auto(full_text)
         return {"notes": [_from_note(n) for n in notes], "page_count": len(pages), "char_count": len(full_text)}
     except HTTPException:
         raise
@@ -1060,7 +1059,7 @@ def import_image(req: ImageImportRequest, x_anthropic_key: str = Header(None)):
             }],
         )
         raw_text = msg.content[0].text
-        notes = parse_text_to_notes(raw_text)
+        notes = parse_auto(raw_text)
         return {"notes": [_from_note(n) for n in notes], "raw_text": raw_text}
     except _anthropic.AuthenticationError:
         raise HTTPException(401, "Invalid Anthropic API key.")

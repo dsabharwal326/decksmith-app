@@ -166,7 +166,7 @@ class _UploadScreenState extends State<UploadScreen> {
           children: [
             Text('Generate from file', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text('Drop a .txt, .csv, .pdf, or image to create Anki cards',
+            Text('Drop a .txt, .tsv, .csv, .pdf, or image to create Anki cards',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             const SizedBox(height: 24),
 
@@ -181,9 +181,10 @@ class _UploadScreenState extends State<UploadScreen> {
                 final isPdf = lp.endsWith('.pdf');
                 final isImage = lp.endsWith('.png') || lp.endsWith('.jpg') ||
                     lp.endsWith('.jpeg') || lp.endsWith('.heic');
-                if (!lp.endsWith('.txt') && !lp.endsWith('.csv') && !isPdf && !isImage) {
+                final isText = lp.endsWith('.txt') || lp.endsWith('.csv') || lp.endsWith('.tsv');
+                if (!isText && !isPdf && !isImage) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Drop a .txt, .csv, .pdf, or image file'), behavior: SnackBarBehavior.floating));
+                    const SnackBar(content: Text('Drop a .txt, .tsv, .csv, .pdf, or image file'), behavior: SnackBarBehavior.floating));
                   return;
                 }
                 final st = context.read<AppState>();
@@ -239,7 +240,7 @@ class _UploadScreenState extends State<UploadScreen> {
                     Text(
                       _draggingCard
                           ? 'Drop it!'
-                          : _fileName ?? 'Tap or drop a card file (.txt, .csv, .pdf, image)',
+                          : _fileName ?? 'Tap or drop a card file (.txt, .tsv, .csv, .pdf, image)',
                       style: tt.bodyMedium?.copyWith(
                         color: _fileName != null ? cs.onSurface : cs.onSurfaceVariant,
                         fontWeight: _fileName != null ? FontWeight.w500 : FontWeight.normal,
@@ -247,7 +248,7 @@ class _UploadScreenState extends State<UploadScreen> {
                     ),
                     if (_fileName == null) ...[
                       const SizedBox(height: 4),
-                      Text('Anki text, CSV, PDF, PNG/JPG',
+                      Text('Anki text, TSV, CSV, PDF, PNG/JPG',
                         style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant.withOpacity(0.6))),
                     ] else ...[
                       const SizedBox(height: 4),

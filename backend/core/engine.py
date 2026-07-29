@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set
+import csv
 import hashlib
+import io
 import re
 import genanki
+
+try:
+    import yaml as _yaml
+    _YAML_AVAILABLE = True
+except ImportError:
+    _YAML_AVAILABLE = False
 
 try:
     import ftfy as _ftfy
@@ -192,6 +200,264 @@ def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
             continue
 
     return notes
+
+
+def parse_yaml_frontmatter_to_notes(text: str) -> List[Note]:
+    """Parse the YAML-frontmatter card format.
+
+    Each card block is:
+        ---
+        type: cloze | basic | basic_reverse | basic_extra
+        tags:
+          - Tag1
+        difficulty: low | medium | high   (optional, ignored)
+        ---
+
+        <card content>
+
+    Cloze content  — first paragraph is the cloze text; second paragraph (if
+    present) is the extra field.
+
+    Basic content  — lines starting with "Q:" and "A:" (multi-line supported);
+    the text after Q: is the front, after A: is the back.
+    """
+    text = _fix_encoding(text)
+    notes: List[Note] = []
+
+    # Split on "---" boundaries; skip empty segments
+    raw_blocks = re.split(r'\n?---\n', text)
+    # Blocks alternate: [pre, frontmatter, body, frontmatter, body, ...]
+    # Strip any leading non-frontmatter text
+    i = 0
+    # Skip content before first ---
+    while i < len(raw_blocks) and not raw_blocks[i].strip().startswith('type:') \
+            and 'type:' not in raw_blocks[i]:
+        i += 1
+
+    while i < len(raw_blocks) - 1:
+        fm_raw = raw_blocks[i].strip()
+        body_raw = raw_blocks[i + 1].strip() if i + 1 < len(raw_blocks) else ''
+        i += 2
+
+        if not fm_raw or 'type:' not in fm_raw:
+            continue
+
+        # Parse frontmatter
+        if _YAML_AVAILABLE:
+            try:
+                meta = _yaml.safe_load(fm_raw) or {}
+            except Exception:
+                meta = {}
+        else:
+            meta = _parse_simple_yaml(fm_raw)
+
+        note_type = str(meta.get('type', 'basic')).strip().lower()
+        raw_tags = meta.get('tags', [])
+        if isinstance(raw_tags, str):
+            raw_tags = [t.strip() for t in raw_tags.split(',') if t.strip()]
+        tags = tuple(str(t).strip() for t in raw_tags if t)
+
+        if not body_raw:
+            continue
+
+        if note_type == 'cloze':
+            # Split body into paragraphs; first = cloze text, rest = extra
+            paragraphs = [p.strip() for p in re.split(r'\n\s*\n', body_raw) if p.strip()]
+            if not paragraphs:
+                continue
+            cloze_text = paragraphs[0]
+            extra = ' '.join(paragraphs[1:]) if len(paragraphs) > 1 else ''
+            if _contains_cloze(cloze_text):
+                notes.append(Note('cloze', cloze_text, '', extra, tags))
+
+        elif note_type in ('basic', 'basic_reverse', 'basic_extra'):
+            front, back, extra = _parse_qa_body(body_raw)
+            if front and back:
+                notes.append(Note(note_type, front, back, extra, tags))
+
+    return notes
+
+
+def _parse_simple_yaml(text: str) -> dict:
+    """Minimal YAML parser for when PyYAML isn't available (handles type/tags/difficulty)."""
+    result: dict = {}
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if ':' in line and not line.startswith(' ') and not line.startswith('-'):
+            key, _, val = line.partition(':')
+            key = key.strip()
+            val = val.strip()
+            if not val:  # list follows
+                items = []
+                i += 1
+                while i < len(lines) and lines[i].startswith(' ') or \
+                        (i < len(lines) and lines[i].strip().startswith('-')):
+                    item = lines[i].strip().lstrip('-').strip()
+                    if item:
+                        items.append(item)
+                    i += 1
+                result[key] = items
+                continue
+            else:
+                result[key] = val
+        i += 1
+    return result
+
+
+def _parse_qa_body(body: str) -> tuple[str, str, str]:
+    """Extract front/back/extra from a Q:/A: body block."""
+    front_lines: List[str] = []
+    back_lines: List[str] = []
+    extra_lines: List[str] = []
+    mode = None  # 'q', 'a', 'extra'
+
+    for line in body.splitlines():
+        stripped = line.strip()
+        if re.match(r'^Q\s*:', stripped, re.IGNORECASE):
+            mode = 'q'
+            rest = re.sub(r'^Q\s*:\s*', '', stripped, flags=re.IGNORECASE)
+            if rest:
+                front_lines.append(rest)
+        elif re.match(r'^A\s*:', stripped, re.IGNORECASE):
+            mode = 'a'
+            rest = re.sub(r'^A\s*:\s*', '', stripped, flags=re.IGNORECASE)
+            if rest:
+                back_lines.append(rest)
+        elif re.match(r'^Extra\s*:', stripped, re.IGNORECASE):
+            mode = 'extra'
+            rest = re.sub(r'^Extra\s*:\s*', '', stripped, flags=re.IGNORECASE)
+            if rest:
+                extra_lines.append(rest)
+        else:
+            if mode == 'q':
+                front_lines.append(stripped)
+            elif mode == 'a':
+                back_lines.append(stripped)
+            elif mode == 'extra':
+                extra_lines.append(stripped)
+
+    front = ' '.join(f for f in front_lines if f)
+    back = ' '.join(b for b in back_lines if b)
+    extra = ' '.join(e for e in extra_lines if e)
+    return front, back, extra
+
+
+def parse_tsv_to_notes(text: str) -> List[Note]:
+    """Parse a TSV file into Notes.
+
+    Supported column layouts (auto-detected by header or column count):
+
+    3 columns:  front  back  tags
+    4 columns:  front  back  extra  tags
+    5 columns:  type   front  back  extra  tags
+    With header row (first row contains non-card text like "front", "back", etc.)
+
+    Tags column is comma- or space-separated.
+    Type column values: basic, cloze, basic_reverse, basic_extra.
+    If type is omitted: cloze if front contains {{c}}, else basic.
+    """
+    text = _fix_encoding(text)
+    notes: List[Note] = []
+    reader = csv.reader(io.StringIO(text), delimiter='\t')
+    rows = list(reader)
+    if not rows:
+        return notes
+
+    # Detect header row
+    header_keywords = {'front', 'back', 'type', 'extra', 'tags', 'note_type',
+                       'question', 'answer', 'text'}
+    first = [c.strip().lower() for c in rows[0]]
+    has_header = any(cell in header_keywords for cell in first)
+
+    # Build column index map
+    col: dict = {}
+    if has_header:
+        for idx, name in enumerate(first):
+            col[name] = idx
+        rows = rows[1:]
+    else:
+        # Positional mapping by column count
+        ncols = len(rows[0]) if rows else 0
+        if ncols == 3:
+            col = {'front': 0, 'back': 1, 'tags': 2}
+        elif ncols == 4:
+            col = {'front': 0, 'back': 1, 'extra': 2, 'tags': 3}
+        elif ncols >= 5:
+            col = {'type': 0, 'front': 1, 'back': 2, 'extra': 3, 'tags': 4}
+        else:
+            col = {'front': 0, 'back': 1}
+
+    # Alias question/answer → front/back
+    if 'question' in col and 'front' not in col:
+        col['front'] = col['question']
+    if 'answer' in col and 'back' not in col:
+        col['back'] = col['answer']
+    if 'text' in col and 'front' not in col:
+        col['front'] = col['text']
+    if 'note_type' in col and 'type' not in col:
+        col['type'] = col['note_type']
+
+    def _get(row: list, key: str, default: str = '') -> str:
+        idx = col.get(key)
+        if idx is None or idx >= len(row):
+            return default
+        return row[idx].strip()
+
+    def _parse_tags(raw: str) -> Tuple[str, ...]:
+        parts = re.split(r'[,\s]+', raw.strip())
+        return tuple(p for p in parts if p)
+
+    for row in rows:
+        if not any(cell.strip() for cell in row):
+            continue
+        front = _get(row, 'front')
+        back = _get(row, 'back')
+        extra = _get(row, 'extra')
+        tags = _parse_tags(_get(row, 'tags'))
+        raw_type = _get(row, 'type')
+
+        if not front:
+            continue
+
+        # Infer type if not given
+        if raw_type:
+            note_type = raw_type.lower().replace(' ', '_').replace('-', '_')
+        elif _contains_cloze(front):
+            note_type = 'cloze'
+        else:
+            note_type = 'basic'
+
+        if note_type not in ALLOWED_NOTE_TYPES:
+            note_type = 'basic'
+
+        notes.append(Note(note_type, front, back, extra, tags))
+
+    return notes
+
+
+def detect_format(text: str) -> str:
+    """Return 'yaml_frontmatter', 'tsv', or 'decksmith' based on content heuristics."""
+    stripped = text.lstrip()
+    if stripped.startswith('---') and 'type:' in stripped[:200]:
+        return 'yaml_frontmatter'
+    # TSV: at least one line with a tab
+    lines = stripped.splitlines()
+    tab_lines = sum(1 for l in lines[:20] if '\t' in l)
+    if tab_lines >= max(1, min(3, len(lines) // 2)):
+        return 'tsv'
+    return 'decksmith'
+
+
+def parse_auto(text: str, strict_repair: bool = False) -> List[Note]:
+    """Detect format and parse accordingly."""
+    fmt = detect_format(text)
+    if fmt == 'yaml_frontmatter':
+        return parse_yaml_frontmatter_to_notes(text)
+    if fmt == 'tsv':
+        return parse_tsv_to_notes(text)
+    return parse_text_to_notes(text, strict_repair=strict_repair)
 
 
 # =========================
