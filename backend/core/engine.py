@@ -389,15 +389,21 @@ def parse_tsv_to_notes(text: str) -> List[Note]:
         else:
             col = {'front': 0, 'back': 1}
 
-    # Alias question/answer → front/back
+    # Aliases
     if 'question' in col and 'front' not in col:
         col['front'] = col['question']
     if 'answer' in col and 'back' not in col:
         col['back'] = col['answer']
-    if 'text' in col and 'front' not in col:
-        col['front'] = col['text']
     if 'note_type' in col and 'type' not in col:
         col['type'] = col['note_type']
+    if 'notetype' in col and 'type' not in col:
+        col['type'] = col['notetype']
+
+    # Track whether a separate 'text' column exists alongside 'front'
+    _text_col = col.get('text')
+    if _text_col is not None and 'front' not in col:
+        col['front'] = _text_col
+        _text_col = None  # merged; no need for special handling
 
     def _get(row: list, key: str, default: str = '') -> str:
         idx = col.get(key)
@@ -412,7 +418,11 @@ def parse_tsv_to_notes(text: str) -> List[Note]:
     for row in rows:
         if not any(cell.strip() for cell in row):
             continue
+        # When both 'text' and 'front' columns exist (e.g. NoteType/Text/Front/Back/Extra/Tags),
+        # cloze cards populate 'text' and leave 'front' empty; basic cards do the reverse.
         front = _get(row, 'front')
+        if not front and _text_col is not None and _text_col < len(row):
+            front = row[_text_col].strip()
         back = _get(row, 'back')
         extra = _get(row, 'extra')
         tags = _parse_tags(_get(row, 'tags'))
@@ -437,11 +447,74 @@ def parse_tsv_to_notes(text: str) -> List[Note]:
     return notes
 
 
+def parse_card_block_to_notes(text: str) -> List[Note]:
+    """Parse the --- CARD N --- / TYPE: / TEXT: / FRONT: / BACK: / EXTRA: / TAGS: format."""
+    text = _fix_encoding(text)
+    notes: List[Note] = []
+
+    # Split on card-block separators
+    blocks = re.split(r'-{2,}\s*CARD\s+\d+\s*-{2,}', text, flags=re.IGNORECASE)
+
+    def _parse_tags(raw: str) -> Tuple[str, ...]:
+        parts = re.split(r'[,\s]+', raw.strip())
+        return tuple(p for p in parts if p)
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        fields: dict = {}
+        current_key: Optional[str] = None
+        current_lines: List[str] = []
+
+        for line in block.splitlines():
+            m = re.match(r'^(TYPE|TEXT|FRONT|BACK|EXTRA|TAGS)\s*:\s*(.*)', line, re.IGNORECASE)
+            if m:
+                if current_key:
+                    fields[current_key] = '\n'.join(current_lines).strip()
+                current_key = m.group(1).upper()
+                current_lines = [m.group(2)]
+            elif current_key:
+                current_lines.append(line)
+
+        if current_key:
+            fields[current_key] = '\n'.join(current_lines).strip()
+
+        if not fields:
+            continue
+
+        raw_type = fields.get('TYPE', '').lower().replace(' ', '_').replace('-', '_')
+        # Cloze cards use TEXT; basic cards use FRONT/BACK
+        front = fields.get('TEXT') or fields.get('FRONT', '')
+        back = fields.get('BACK', '')
+        extra = fields.get('EXTRA', '')
+        tags = _parse_tags(fields.get('TAGS', ''))
+
+        if not front:
+            continue
+
+        if raw_type in ALLOWED_NOTE_TYPES:
+            note_type = raw_type
+        elif _contains_cloze(front):
+            note_type = 'cloze'
+        else:
+            note_type = 'basic'
+
+        notes.append(Note(note_type, front, back, extra, tags))
+
+    return notes
+
+
 def detect_format(text: str) -> str:
-    """Return 'yaml_frontmatter', 'tsv', or 'decksmith' based on content heuristics."""
+    """Return 'yaml_frontmatter', 'card_block', 'tsv', or 'decksmith'."""
     stripped = text.lstrip()
     if stripped.startswith('---') and 'type:' in stripped[:200]:
         return 'yaml_frontmatter'
+    # Card-block: lines like "--- CARD 1 ---" or "TYPE: Cloze"
+    if re.search(r'-{2,}\s*CARD\s+\d+\s*-{2,}', stripped[:500], re.IGNORECASE):
+        return 'card_block'
+    if re.match(r'(TYPE|TEXT|FRONT|BACK)\s*:', stripped[:200], re.IGNORECASE):
+        return 'card_block'
     # TSV: at least one line with a tab
     lines = stripped.splitlines()
     tab_lines = sum(1 for l in lines[:20] if '\t' in l)
@@ -455,6 +528,8 @@ def parse_auto(text: str, strict_repair: bool = False) -> List[Note]:
     fmt = detect_format(text)
     if fmt == 'yaml_frontmatter':
         return parse_yaml_frontmatter_to_notes(text)
+    if fmt == 'card_block':
+        return parse_card_block_to_notes(text)
     if fmt == 'tsv':
         return parse_tsv_to_notes(text)
     return parse_text_to_notes(text, strict_repair=strict_repair)
