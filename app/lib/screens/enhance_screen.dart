@@ -6,6 +6,7 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:provider/provider.dart';
 import '../models/app_state.dart';
 import '../services/api_service.dart';
+import '../widgets/scope_picker.dart';
 
 class EnhanceScreen extends StatefulWidget {
   const EnhanceScreen({super.key});
@@ -212,6 +213,11 @@ class _EnhanceScreenState extends State<EnhanceScreen> with AutomaticKeepAliveCl
                 ),
               ),
             ),
+
+            const SizedBox(height: 24),
+
+            // ── Exam scope ──────────────────────────────────────────────
+            const ScopePicker(),
 
             const SizedBox(height: 24),
 

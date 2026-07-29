@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/app_state.dart';
 import '../services/api_service.dart';
+import '../widgets/scope_picker.dart';
 import 'enhance_screen.dart' show EnhancementOptions;
 
 const _specialties = [
@@ -90,7 +91,6 @@ class _TopicScreenState extends State<TopicScreen> {
   String _specialty    = 'Any / General';
   int    _count        = 20;
   String _cardStyle    = 'none';
-  String _usmleStep    = 'step1';
   String _clozeDensity = 'recommended';
   bool   _mnemonics    = false;
   bool   _batchMode    = false;
@@ -108,7 +108,6 @@ class _TopicScreenState extends State<TopicScreen> {
       _specialty    = p.getString('topic_specialty')     ?? 'Any / General';
       _count        = p.getInt('topic_count')            ?? 20;
       _cardStyle    = p.getString('topic_card_style')    ?? 'none';
-      _usmleStep    = p.getString('topic_usmle_step')    ?? 'step1';
       _clozeDensity = p.getString('topic_cloze_density') ?? 'recommended';
       _mnemonics    = p.getBool('topic_mnemonics')       ?? false;
       _tagCtrl.text     = p.getString('topic_tag_prefix')    ?? '';
@@ -122,7 +121,6 @@ class _TopicScreenState extends State<TopicScreen> {
       p.setString('topic_specialty',      _specialty),
       p.setInt   ('topic_count',          _count),
       p.setString('topic_card_style',     _cardStyle),
-      p.setString('topic_usmle_step',     _usmleStep),
       p.setString('topic_cloze_density',  _clozeDensity),
       p.setBool  ('topic_mnemonics',      _mnemonics),
       p.setString('topic_tag_prefix',     _tagCtrl.text),
@@ -158,7 +156,7 @@ class _TopicScreenState extends State<TopicScreen> {
     final specialty    = _specialty;
     final count        = _count;
     final cardStyle    = _cardStyle;
-    final usmleStep    = _usmleStep;
+    final usmleStep    = state.usmleStep;
     final clozeDensity = _clozeDensity;
     final mnemonics    = _mnemonics;
     final tagPrefix    = _tagCtrl.text.trim();
@@ -300,19 +298,7 @@ class _TopicScreenState extends State<TopicScreen> {
             const Divider(height: 32),
 
             // ── Exam scope ────────────────────────────────────────────────
-            Row(children: [
-              Icon(Icons.school_rounded, size: 16, color: cs.onSurfaceVariant),
-              const SizedBox(width: 8),
-              Text('Exam scope', style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w500)),
-            ]),
-            const SizedBox(height: 10),
-            Row(children: [
-              _Pill(label: 'Step 1',    subtitle: 'Basic sciences',   value: 'step1', selected: _usmleStep, onTap: (v) => _set(() => _usmleStep = v)),
-              const SizedBox(width: 8),
-              _Pill(label: 'Step 2 CK', subtitle: 'Clinical dx & tx', value: 'step2', selected: _usmleStep, onTap: (v) => _set(() => _usmleStep = v)),
-              const SizedBox(width: 8),
-              _Pill(label: 'Step 3',    subtitle: 'Patient mgmt',     value: 'step3', selected: _usmleStep, onTap: (v) => _set(() => _usmleStep = v)),
-            ]),
+            const ScopePicker(),
 
             const SizedBox(height: 20),
 

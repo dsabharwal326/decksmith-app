@@ -103,6 +103,7 @@ class AppState extends ChangeNotifier {
   // serviceKey is always 'decksmith' — invisible to users
   final String serviceKey = 'decksmith';
   String selectedProvider = 'ollama';
+  String usmleStep = 'step1';
   String defaultOutputPath = '';
   String lastPickerPath = '';
   String defaultOllamaModel = 'mistral';
@@ -158,6 +159,7 @@ class AppState extends ChangeNotifier {
     final savedURL = prefs.getString('apiBaseURL') ?? '';
     apiBaseURL = savedURL.isNotEmpty ? savedURL : 'http://localhost:8503';
     selectedProvider = prefs.getString('selectedProvider') ?? 'ollama';
+    usmleStep = prefs.getString('usmleStep') ?? 'step1';
     defaultOutputPath = prefs.getString('defaultOutputPath') ?? '';
     lastPickerPath = prefs.getString('lastPickerPath') ?? '';
     defaultOllamaModel = prefs.getString('defaultOllamaModel') ?? 'mistral';
@@ -177,6 +179,7 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('apiBaseURL', apiBaseURL);
     await prefs.setString('selectedProvider', selectedProvider);
+    await prefs.setString('usmleStep', usmleStep);
     await prefs.setString('defaultOutputPath', defaultOutputPath);
     await prefs.setString('lastPickerPath', lastPickerPath);
     await prefs.setString('defaultOllamaModel', defaultOllamaModel);

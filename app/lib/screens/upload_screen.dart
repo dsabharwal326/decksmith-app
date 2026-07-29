@@ -5,6 +5,7 @@ import 'package:desktop_drop/desktop_drop.dart';
 import 'package:provider/provider.dart';
 import '../models/app_state.dart';
 import '../services/api_service.dart';
+import '../widgets/scope_picker.dart';
 
 // ── picked file record ──────────────────────────────────────────────────────
 
@@ -336,6 +337,11 @@ class _UploadScreenState extends State<UploadScreen> {
                 ]),
               ),
             ],
+
+            const SizedBox(height: 24),
+
+            // ── Exam scope ──────────────────────────────────────────────
+            const ScopePicker(),
 
             const SizedBox(height: 24),
 
