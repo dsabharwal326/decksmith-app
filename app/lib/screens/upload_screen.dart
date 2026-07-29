@@ -6,6 +6,38 @@ import 'package:provider/provider.dart';
 import '../models/app_state.dart';
 import '../services/api_service.dart';
 
+// ── picked file record ──────────────────────────────────────────────────────
+
+class _PickedFile {
+  final String path;
+  final String name;
+  final bool isPdf;
+  final bool isImage;
+  _PickedFile({required this.path, required this.name, required this.isPdf, required this.isImage});
+
+  static bool _isPdfPath(String p) => p.toLowerCase().endsWith('.pdf');
+  static bool _isImagePath(String p) {
+    final lp = p.toLowerCase();
+    return lp.endsWith('.png') || lp.endsWith('.jpg') || lp.endsWith('.jpeg') || lp.endsWith('.heic');
+  }
+
+  static bool isTextPath(String p) {
+    final lp = p.toLowerCase();
+    return lp.endsWith('.txt') || lp.endsWith('.tsv') || lp.endsWith('.csv');
+  }
+
+  static _PickedFile fromPath(String path) => _PickedFile(
+    path: path,
+    name: path.split('/').last,
+    isPdf: _isPdfPath(path),
+    isImage: _isImagePath(path),
+  );
+
+  bool get isText => !isPdf && !isImage;
+}
+
+// ── screen ──────────────────────────────────────────────────────────────────
+
 class UploadScreen extends StatefulWidget {
   const UploadScreen({super.key});
   @override
@@ -14,19 +46,19 @@ class UploadScreen extends StatefulWidget {
 
 class _UploadScreenState extends State<UploadScreen> {
   final _deckNameCtrl = TextEditingController(text: 'My Deck');
-  String? _fileName;
+  final List<_PickedFile> _files = [];
   bool _draggingCard = false;
   bool _draggingApkg = false;
-  bool _isPdf = false;
-  bool _isImage = false;
   bool _skipDupes = false;
-  String? _detectedStep;   // null = not yet detected
+  String? _detectedStep;
 
   @override
   void dispose() {
     _deckNameCtrl.dispose();
     super.dispose();
   }
+
+  // ── helpers ──────────────────────────────────────────────────────────────
 
   String _stepLabel(String step) => switch (step) {
     'step1' => 'USMLE Step 1 — Basic sciences',
@@ -37,8 +69,7 @@ class _UploadScreenState extends State<UploadScreen> {
 
   Future<void> _detectStep(String textSample) async {
     try {
-      final state = context.read<AppState>();
-      final step = await ApiService(state).detectStep(textSample);
+      final step = await ApiService(context.read<AppState>()).detectStep(textSample);
       if (mounted) setState(() => _detectedStep = step);
     } catch (_) {}
   }
@@ -50,32 +81,58 @@ class _UploadScreenState extends State<UploadScreen> {
     if (titled.isNotEmpty) _deckNameCtrl.text = titled;
   }
 
-  Future<void> _pickCardFile() async {
+  bool _isAcceptedPath(String path) {
+    final lp = path.toLowerCase();
+    return lp.endsWith('.txt') || lp.endsWith('.tsv') || lp.endsWith('.csv') ||
+        lp.endsWith('.pdf') || lp.endsWith('.png') || lp.endsWith('.jpg') ||
+        lp.endsWith('.jpeg') || lp.endsWith('.heic');
+  }
+
+  void _addFiles(List<String> paths) {
+    bool addedFirst = _files.isEmpty;
+    for (final path in paths) {
+      if (!_isAcceptedPath(path)) continue;
+      // Only one PDF/image allowed at a time; text files can stack
+      final pf = _PickedFile.fromPath(path);
+      if (!pf.isText && _files.isNotEmpty) {
+        // Replacing binary with another binary or adding binary to text list — warn
+        if (_files.any((f) => !f.isText)) {
+          _files.removeWhere((f) => !f.isText);
+        }
+      }
+      if (!_files.any((f) => f.path == path)) {
+        _files.add(pf);
+        if (addedFirst) {
+          _suggestDeckName(pf.name);
+          addedFirst = false;
+        }
+      }
+    }
+    _detectedStep = null;
+  }
+
+  // ── file pickers ─────────────────────────────────────────────────────────
+
+  Future<void> _pickCardFiles() async {
     final state = context.read<AppState>();
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
       withData: false,
+      allowMultiple: true,
       initialDirectory: state.lastPickerPath.isEmpty ? null : state.lastPickerPath,
     );
     if (result == null || result.files.isEmpty) return;
-    final file = result.files.first;
-    final path = file.path;
-    if (path == null) return;
-    state.lastPickerPath = File(path).parent.path;
-    state.saveSettings();
-    final lp = path.toLowerCase();
-    final isPdf = lp.endsWith('.pdf');
-    final isImage = lp.endsWith('.png') || lp.endsWith('.jpg') ||
-        lp.endsWith('.jpeg') || lp.endsWith('.heic');
-    if (isPdf || isImage) {
-      state.cardText = path; // store path; bytes read in _build
-    } else {
-      state.cardText = await File(path).readAsString();
+    final paths = result.files.map((f) => f.path).whereType<String>().toList();
+    if (paths.isEmpty) return;
+    state.lastPickerPath = File(paths.first).parent.path;
+    await state.saveSettings();
+    setState(() => _addFiles(paths));
+    // detect step from first text file
+    final firstText = _files.where((f) => f.isText).firstOrNull;
+    if (firstText != null) {
+      final text = await File(firstText.path).readAsString();
+      _detectStep(text.substring(0, text.length.clamp(0, 2000)));
     }
-    if (!mounted) return;
-    setState(() { _fileName = file.name; _isPdf = isPdf; _isImage = isImage; _detectedStep = null; });
-    _suggestDeckName(file.name);
-    if (!isPdf && !isImage) _detectStep(state.cardText.substring(0, state.cardText.length.clamp(0, 2000)));
   }
 
   Future<void> _pickApkg() async {
@@ -96,37 +153,56 @@ class _UploadScreenState extends State<UploadScreen> {
     state.setExistingApkg(bytes, file.name);
   }
 
+  // ── build deck ────────────────────────────────────────────────────────────
+
   Future<void> _build() async {
     final state = context.read<AppState>();
-    if (state.cardText.isEmpty) {
+    if (_files.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pick a card file first'), behavior: SnackBarBehavior.floating));
+        const SnackBar(content: Text('Pick at least one card file first'), behavior: SnackBarBehavior.floating));
       return;
     }
     state.deckName = _deckNameCtrl.text.trim().isEmpty ? 'My Deck' : _deckNameCtrl.text.trim();
     state.setPhase(AppPhase.processing);
     final api = ApiService(state);
     try {
-      List<NoteModel> notes;
-      if (_isPdf) {
-        state.setProgress('Extracting PDF…', 0.1);
-        final bytes = await File(state.cardText).readAsBytes();
-        notes = await api.importPdf(bytes);
-      } else if (_isImage) {
-        state.setProgress('Reading image…', 0.1);
-        final bytes = await File(state.cardText).readAsBytes();
-        final path = state.cardText.toLowerCase();
-        final mediaType = path.endsWith('.png') ? 'image/png'
-            : path.endsWith('.jpg') || path.endsWith('.jpeg') ? 'image/jpeg'
-            : 'image/heic';
-        notes = await api.importImage(bytes, mediaType);
-      } else {
-        state.setProgress('Parsing cards…', 0.1);
-        notes = await api.parseCards(state.cardText);
+      List<NoteModel> notes = [];
+
+      // Handle binary files (PDF / image) — single-file only
+      final binaryFile = _files.where((f) => !f.isText).firstOrNull;
+      if (binaryFile != null) {
+        if (binaryFile.isPdf) {
+          state.setProgress('Extracting PDF…', 0.1);
+          final bytes = await File(binaryFile.path).readAsBytes();
+          notes = await api.importPdf(bytes);
+        } else {
+          state.setProgress('Reading image…', 0.1);
+          final bytes = await File(binaryFile.path).readAsBytes();
+          final lp = binaryFile.path.toLowerCase();
+          final mediaType = lp.endsWith('.png') ? 'image/png'
+              : lp.endsWith('.jpg') || lp.endsWith('.jpeg') ? 'image/jpeg'
+              : 'image/heic';
+          notes = await api.importImage(bytes, mediaType);
+        }
+      }
+
+      // Handle text files — read and concatenate
+      final textFiles = _files.where((f) => f.isText).toList();
+      if (textFiles.isNotEmpty) {
+        state.setProgress('Reading ${textFiles.length} file${textFiles.length > 1 ? 's' : ''}…', 0.1);
+        final parts = <String>[];
+        for (final tf in textFiles) {
+          parts.add(await File(tf.path).readAsString());
+        }
+        final combined = parts.join('\n\n');
+        state.cardText = combined;
+        state.setProgress('Parsing cards…', 0.2);
+        final textNotes = await api.parseCards(combined);
+        notes = [...notes, ...textNotes];
       }
 
       if (_skipDupes && state.existingApkgBytes != null) {
-        state.setProgress('Checking for duplicates…', 0.4);
+        state.setProgress('Checking for duplicates…', 0.5);
         final dedupeResult = await api.dedupe(apkgBytes: state.existingApkgBytes!, notes: notes);
         notes = (dedupeResult['new_notes'] as List)
             .map((n) => NoteModel.fromJson(n as Map<String, dynamic>))
@@ -134,28 +210,27 @@ class _UploadScreenState extends State<UploadScreen> {
         state.dupesSkipped = dedupeResult['duplicate_count'] as int;
       }
 
-      state.setProgress('Validating…', 0.7);
+      state.setProgress('Validating…', 0.8);
       final validation = await api.validate(notes);
-
       state.setReview(notes: notes, validation: validation);
     } catch (e) {
       final msg = e.toString().replaceFirst('Exception: ', '');
       state.setError(msg);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(msg),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 6),
-        ));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg), behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 6),
+      ));
     }
   }
+
+  // ── ui ────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final cs = Theme.of(context).colorScheme;
     final tt = Theme.of(context).textTheme;
+    final hasFiles = _files.isNotEmpty;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
@@ -166,98 +241,82 @@ class _UploadScreenState extends State<UploadScreen> {
           children: [
             Text('Generate from file', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text('Drop a .txt, .tsv, .csv, .pdf, or image to create Anki cards',
+            Text('Drop one or more .txt, .tsv, .csv, .pdf, or image files — multiple text files are merged into one deck',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             const SizedBox(height: 24),
 
-            // ── Card file drop zone ────────────────────────────────────
+            // ── Drop zone ────────────────────────────────────────────────
             DropTarget(
               onDragEntered: (_) => setState(() => _draggingCard = true),
               onDragExited: (_) => setState(() => _draggingCard = false),
               onDragDone: (details) async {
                 setState(() => _draggingCard = false);
-                final path = details.files.first.path;
-                final lp = path.toLowerCase();
-                final isPdf = lp.endsWith('.pdf');
-                final isImage = lp.endsWith('.png') || lp.endsWith('.jpg') ||
-                    lp.endsWith('.jpeg') || lp.endsWith('.heic');
-                final isText = lp.endsWith('.txt') || lp.endsWith('.csv') || lp.endsWith('.tsv');
-                if (!isText && !isPdf && !isImage) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Drop a .txt, .tsv, .csv, .pdf, or image file'), behavior: SnackBarBehavior.floating));
+                final paths = details.files.map((f) => f.path).toList();
+                final valid = paths.where(_isAcceptedPath).toList();
+                if (valid.isEmpty) {
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Drop .txt, .tsv, .csv, .pdf, or image files'), behavior: SnackBarBehavior.floating));
                   return;
                 }
-                final st = context.read<AppState>();
-                if (isPdf || isImage) {
-                  st.cardText = path;
-                } else {
-                  final bytes = await File(path).readAsBytes();
-                  st.cardText = String.fromCharCodes(bytes);
+                setState(() => _addFiles(valid));
+                final firstText = _files.where((f) => f.isText).firstOrNull;
+                if (firstText != null) {
+                  final text = await File(firstText.path).readAsString();
+                  if (mounted) _detectStep(text.substring(0, text.length.clamp(0, 2000)));
                 }
-                if (!mounted) return;
-                final name = path.split('/').last;
-                setState(() { _fileName = name; _isPdf = isPdf; _isImage = isImage; _detectedStep = null; });
-                _suggestDeckName(name);
-                if (!isPdf && !isImage) _detectStep(st.cardText.substring(0, st.cardText.length.clamp(0, 2000)));
               },
               child: GestureDetector(
-                onTap: _pickCardFile,
+                onTap: _pickCardFiles,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 36),
+                  padding: EdgeInsets.symmetric(vertical: hasFiles ? 20 : 36),
                   decoration: BoxDecoration(
                     border: Border.all(
-                      color: _draggingCard
-                          ? cs.primary
-                          : _fileName != null
-                              ? cs.primary.withOpacity(0.7)
-                              : cs.outlineVariant,
+                      color: _draggingCard ? cs.primary : hasFiles ? cs.primary.withOpacity(0.7) : cs.outlineVariant,
                       width: _draggingCard ? 2 : 1.5,
                     ),
                     borderRadius: BorderRadius.circular(14),
                     color: _draggingCard
                         ? cs.primaryContainer.withOpacity(0.4)
-                        : _fileName != null
-                            ? cs.primaryContainer.withOpacity(0.12)
-                            : cs.surfaceContainerLowest,
+                        : hasFiles ? cs.primaryContainer.withOpacity(0.12) : cs.surfaceContainerLowest,
                   ),
-                  child: Column(children: [
-                    AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      child: Icon(
-                        _draggingCard
-                            ? Icons.download_rounded
-                            : _fileName != null
-                                ? Icons.check_circle_rounded
-                                : Icons.upload_file_rounded,
-                        key: ValueKey(_draggingCard ? 'drag' : _fileName != null ? 'done' : 'empty'),
-                        size: 32,
-                        color: _fileName != null || _draggingCard ? cs.primary : cs.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      _draggingCard
-                          ? 'Drop it!'
-                          : _fileName ?? 'Tap or drop a card file (.txt, .tsv, .csv, .pdf, image)',
-                      style: tt.bodyMedium?.copyWith(
-                        color: _fileName != null ? cs.onSurface : cs.onSurfaceVariant,
-                        fontWeight: _fileName != null ? FontWeight.w500 : FontWeight.normal,
-                      ),
-                    ),
-                    if (_fileName == null) ...[
-                      const SizedBox(height: 4),
-                      Text('Anki text, TSV, CSV, PDF, PNG/JPG',
-                        style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant.withOpacity(0.6))),
-                    ] else ...[
-                      const SizedBox(height: 4),
-                      Text('Tap to change', style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-                    ],
-                  ]),
+                  child: hasFiles
+                      ? _FileList(files: _files, cs: cs, tt: tt, onRemove: (f) => setState(() {
+                          _files.remove(f);
+                          if (_files.isEmpty) _detectedStep = null;
+                        }))
+                      : Column(children: [
+                          Icon(Icons.upload_file_rounded, size: 32,
+                            color: _draggingCard ? cs.primary : cs.onSurfaceVariant),
+                          const SizedBox(height: 10),
+                          Text(_draggingCard ? 'Drop it!' : 'Tap or drop card files',
+                            style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+                          const SizedBox(height: 4),
+                          Text('Anki text, TSV, CSV, PDF, PNG/JPG — multi-file merges into one deck',
+                            style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant.withOpacity(0.6))),
+                        ]),
                 ),
               ),
             ),
+
+            // Add more files button (when files already selected)
+            if (hasFiles) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                TextButton.icon(
+                  onPressed: _pickCardFiles,
+                  icon: const Icon(Icons.add_rounded, size: 16),
+                  label: const Text('Add more files'),
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                ),
+                if (_files.length > 1) ...[
+                  const SizedBox(width: 8),
+                  Text('${_files.length} files → 1 deck',
+                    style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                ],
+              ]),
+            ],
 
             if (_detectedStep != null) ...[
               const SizedBox(height: 12),
@@ -273,16 +332,14 @@ class _UploadScreenState extends State<UploadScreen> {
                   const SizedBox(width: 8),
                   Text('Detected scope: ${_stepLabel(_detectedStep!)}',
                     style: tt.bodySmall?.copyWith(
-                      color: cs.onTertiaryContainer,
-                      fontWeight: FontWeight.w600,
-                    )),
+                      color: cs.onTertiaryContainer, fontWeight: FontWeight.w600)),
                 ]),
               ),
             ],
 
             const SizedBox(height: 24),
 
-            // ── Deck name ──────────────────────────────────────────────
+            // ── Deck name ───────────────────────────────────────────────
             Text('Deck name', style: tt.labelLarge?.copyWith(fontWeight: FontWeight.w500)),
             const SizedBox(height: 8),
             TextField(
@@ -309,7 +366,7 @@ class _UploadScreenState extends State<UploadScreen> {
             const Divider(),
             const SizedBox(height: 8),
 
-            // ── Deduplicate section ────────────────────────────────────
+            // ── Deduplicate ─────────────────────────────────────────────
             Row(children: [
               Icon(Icons.layers_clear_rounded, size: 16, color: cs.onSurfaceVariant),
               const SizedBox(width: 8),
@@ -324,79 +381,112 @@ class _UploadScreenState extends State<UploadScreen> {
               ),
             ]),
             if (_skipDupes) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Import an existing .apkg — cards already in that deck will be skipped.',
-              style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-
-            if (state.existingApkgName != null) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                decoration: BoxDecoration(
-                  color: cs.secondaryContainer.withOpacity(0.4),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: cs.outline.withOpacity(0.3)),
-                ),
-                child: Row(children: [
-                  Icon(Icons.check_circle_rounded, size: 16, color: cs.secondary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(state.existingApkgName!,
+              const SizedBox(height: 6),
+              Text('Import an existing .apkg — cards already in that deck will be skipped.',
+                style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+              const SizedBox(height: 12),
+              if (state.existingApkgName != null) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: cs.secondaryContainer.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: cs.outline.withOpacity(0.3)),
+                  ),
+                  child: Row(children: [
+                    Icon(Icons.check_circle_rounded, size: 16, color: cs.secondary),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(state.existingApkgName!,
                       style: tt.bodySmall?.copyWith(fontWeight: FontWeight.w500),
-                      overflow: TextOverflow.ellipsis),
-                  ),
-                  GestureDetector(
-                    onTap: state.clearExistingApkg,
-                    child: Icon(Icons.close_rounded, size: 16, color: cs.onSurfaceVariant),
-                  ),
-                ]),
+                      overflow: TextOverflow.ellipsis)),
+                    GestureDetector(
+                      onTap: state.clearExistingApkg,
+                      child: Icon(Icons.close_rounded, size: 16, color: cs.onSurfaceVariant)),
+                  ]),
+                ),
+                const SizedBox(height: 8),
+              ],
+              DropTarget(
+                onDragEntered: (_) => setState(() => _draggingApkg = true),
+                onDragExited: (_) => setState(() => _draggingApkg = false),
+                onDragDone: (details) async {
+                  setState(() => _draggingApkg = false);
+                  final path = details.files.first.path;
+                  if (!path.endsWith('.apkg')) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Drop an .apkg file'), behavior: SnackBarBehavior.floating));
+                    return;
+                  }
+                  final bytes = await File(path).readAsBytes();
+                  if (!mounted) return;
+                  context.read<AppState>().setExistingApkg(bytes, path.split('/').last);
+                },
+                child: OutlinedButton.icon(
+                  onPressed: _pickApkg,
+                  icon: Icon(_draggingApkg ? Icons.download_rounded : Icons.file_open_rounded, size: 16),
+                  label: Text(_draggingApkg ? 'Drop to import'
+                      : state.existingApkgName != null ? 'Change .apkg'
+                      : 'Import existing deck (.apkg)'),
+                ),
               ),
-              const SizedBox(height: 8),
             ],
 
-            DropTarget(
-              onDragEntered: (_) => setState(() => _draggingApkg = true),
-              onDragExited: (_) => setState(() => _draggingApkg = false),
-              onDragDone: (details) async {
-                setState(() => _draggingApkg = false);
-                final path = details.files.first.path;
-                if (!path.endsWith('.apkg')) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Drop an .apkg file'), behavior: SnackBarBehavior.floating));
-                  return;
-                }
-                final bytes = await File(path).readAsBytes();
-                if (!mounted) return;
-                context.read<AppState>().setExistingApkg(bytes, path.split('/').last);
-              },
-              child: OutlinedButton.icon(
-                onPressed: _pickApkg,
-                icon: Icon(_draggingApkg ? Icons.download_rounded : Icons.file_open_rounded, size: 16),
-                label: Text(_draggingApkg
-                    ? 'Drop to import'
-                    : state.existingApkgName != null
-                        ? 'Change .apkg'
-                        : 'Import existing deck (.apkg)'),
-              ),
-            ),
-            ], // end if (_skipDupes)
-
             const SizedBox(height: 20),
-
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
                 onPressed: _build,
                 icon: const Icon(Icons.preview_rounded, size: 18),
                 label: const Text('Preview & build  →'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
+                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ── file list widget ─────────────────────────────────────────────────────────
+
+class _FileList extends StatelessWidget {
+  final List<_PickedFile> files;
+  final ColorScheme cs;
+  final TextTheme tt;
+  final void Function(_PickedFile) onRemove;
+  const _FileList({required this.files, required this.cs, required this.tt, required this.onRemove});
+
+  IconData _icon(_PickedFile f) {
+    if (f.isPdf) return Icons.picture_as_pdf_rounded;
+    if (f.isImage) return Icons.image_rounded;
+    final ext = f.name.split('.').last.toLowerCase();
+    if (ext == 'tsv') return Icons.table_rows_rounded;
+    if (ext == 'csv') return Icons.grid_on_rounded;
+    return Icons.text_snippet_rounded;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (int i = 0; i < files.length; i++) ...[
+            if (i > 0) const SizedBox(height: 6),
+            Row(children: [
+              Icon(_icon(files[i]), size: 16, color: cs.primary),
+              const SizedBox(width: 8),
+              Expanded(child: Text(files[i].name,
+                style: tt.bodySmall?.copyWith(fontWeight: FontWeight.w500),
+                overflow: TextOverflow.ellipsis)),
+              GestureDetector(
+                onTap: () => onRemove(files[i]),
+                child: Icon(Icons.close_rounded, size: 15, color: cs.onSurfaceVariant)),
+            ]),
+          ],
+        ],
       ),
     );
   }
