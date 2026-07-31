@@ -60,20 +60,38 @@ echo "    Embedded at: $DEST"
 # ── 4. Build .pkg ─────────────────────────────────────────────────────────
 echo "==> [4/4] Creating installer package..."
 
-# Install destination: /Applications
+# Stage payload: /Applications
 STAGE="$REPO/dist/.pkg_stage"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/Applications"
 cp -R "$APP_BUNDLE" "$STAGE/Applications/"
+
+# Postinstall script: copy app to the installing user's Desktop
+SCRIPTS_DIR="$REPO/dist/.pkg_scripts"
+rm -rf "$SCRIPTS_DIR"
+mkdir -p "$SCRIPTS_DIR"
+cat > "$SCRIPTS_DIR/postinstall" <<'SCRIPT'
+#!/usr/bin/env bash
+# Copy the app to the current user's Desktop (overwrite if present)
+DEST_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "$USER")
+DESKTOP="/Users/$DEST_USER/Desktop"
+if [ -d "$DESKTOP" ]; then
+    cp -R "/Applications/decksmith_app.app" "$DESKTOP/decksmith_app.app"
+    chown -R "$DEST_USER" "$DESKTOP/decksmith_app.app"
+fi
+exit 0
+SCRIPT
+chmod +x "$SCRIPTS_DIR/postinstall"
 
 pkgbuild \
   --root "$STAGE" \
   --identifier "com.decksmith.app" \
   --version "$VERSION" \
   --install-location "/" \
+  --scripts "$SCRIPTS_DIR" \
   "$PKG_OUT"
 
-rm -rf "$STAGE"
+rm -rf "$STAGE" "$SCRIPTS_DIR"
 
 echo ""
 echo "✓ Done! Installer: $PKG_OUT"
