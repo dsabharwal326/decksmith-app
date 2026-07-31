@@ -268,7 +268,9 @@ def _run_augment_job(job_id: str, req_notes, opts, provider, model):
         if opts.target_format != "keep":
             converted = []
             for n in notes:
-                if opts.target_format == "basic_extra":
+                if n.note_type == "table":
+                    converted.append(n)  # table cards are never reformatted
+                elif opts.target_format == "basic_extra":
                     converted.append(Note(note_type="basic_extra", front=n.front, back=n.back, extra=n.extra, tags=n.tags))
                 elif opts.target_format == "basic":
                     import re as _re

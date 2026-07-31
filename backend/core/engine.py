@@ -35,6 +35,7 @@ ALLOWED_NOTE_TYPES = {
     "basic",
     "basic_reverse",
     "basic_extra",
+    "table",
 }
 
 CLOZE_PATTERN = re.compile(r"\{\{c\d+::.+?\}\}")
@@ -124,6 +125,10 @@ def _validate_note(note: Note) -> None:
         if not note.back.strip():
             raise ValidationError("Back field empty")
 
+    if note.note_type == "table":
+        if not note.back.strip():
+            raise ValidationError("Table note missing table data in back field")
+
 
 # =========================
 # PARSER
@@ -138,13 +143,33 @@ def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
     collecting_cloze = False
 
     _block_key_re = re.compile(r'^(TYPE|TEXT|FRONT|BACK|EXTRA|TAGS|NOTETYPE)\s*:', re.IGNORECASE)
+    _table_row_re = re.compile(r'^\|.+\|')
+
+    prev_question: str = ''          # last non-empty, non-pipe line (candidate table question)
+    table_rows: List[str] = []       # accumulated pipe lines for current table block
+
+    def _flush_table() -> Optional[Note]:
+        nonlocal table_rows, prev_question
+        rows = table_rows[:]
+        table_rows = []
+        q = prev_question
+        prev_question = ''
+        if rows and q:
+            return Note("table", q, '\n'.join(rows))
+        return None
 
     for raw_line in lines:
         line = raw_line.rstrip()
 
         if not line.strip():
+            # Blank line — flush any pending table block
+            if table_rows:
+                n = _flush_table()
+                if n:
+                    notes.append(n)
             cloze_buffer.clear()
             collecting_cloze = False
+            prev_question = ''
             continue
 
         # Skip card-block metadata lines so they aren't mis-parsed as card content
@@ -153,6 +178,17 @@ def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
 
         if strict_repair:
             line = line.strip()
+
+        # Table row detection: lines like | Cell | Cell |
+        if _table_row_re.match(line.strip()):
+            table_rows.append(line.strip())
+            continue
+        else:
+            # Starting a non-pipe line: flush any accumulated table
+            if table_rows:
+                n = _flush_table()
+                if n:
+                    notes.append(n)
 
         if collecting_cloze:
             cloze_buffer.append(line)
@@ -203,7 +239,17 @@ def parse_text_to_notes(text: str, strict_repair: bool) -> List[Note]:
                 notes.append(
                     Note("basic", parts[0].strip(), parts[1].strip())
                 )
+            prev_question = ''
             continue
+
+        # Plain line — remember it as the candidate question for a following table
+        prev_question = line.strip()
+
+    # Flush any trailing table block
+    if table_rows:
+        n = _flush_table()
+        if n:
+            notes.append(n)
 
     return notes
 
@@ -587,6 +633,16 @@ def _create_models():
                 "afmt": "{{Front}}<hr id=\"answer\">{{Back}}<br>{{Extra}}",
             }],
         ),
+        "table": genanki.Model(
+            _model_id("table"),
+            "Table",
+            fields=[{"name": "Front"}, {"name": "Table"}, {"name": "Extra"}],
+            templates=[{
+                "name": "Card 1",
+                "qfmt": "{{Front}}",
+                "afmt": "{{Front}}<hr id=\"answer\">{{Table}}{{#Extra}}<br><small>{{Extra}}</small>{{/Extra}}",
+            }],
+        ),
     }
 
 
@@ -622,6 +678,43 @@ def _html_extra(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
 
 
+_TABLE_CSS = (
+    'border-collapse:collapse;width:100%;font-size:0.95em'
+)
+_TH_CSS = (
+    'border:1px solid #aaa;padding:6px 10px;text-align:left;'
+    'background:#f0f0f0;font-weight:bold'
+)
+_TD_CSS = 'border:1px solid #aaa;padding:6px 10px;text-align:left'
+
+
+def _html_table(text: str) -> str:
+    """Convert pipe-delimited markdown table text to an HTML <table>."""
+    if not text.strip():
+        return ''
+    rows = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Skip markdown separator rows like |---|---|
+        if re.match(r'^\|?\s*[-:]+\s*(\|\s*[-:]+\s*)+\|?\s*$', line):
+            continue
+        if '|' in line:
+            cells = [c.strip() for c in line.strip('|').split('|')]
+            rows.append(cells)
+    if not rows:
+        return text  # not a valid table; return raw
+    parts = [f'<table style="{_TABLE_CSS}">']
+    for i, row in enumerate(rows):
+        tag, css = ('th', _TH_CSS) if i == 0 else ('td', _TD_CSS)
+        parts.append('<tr>' + ''.join(
+            f'<{tag} style="{css}">{cell}</{tag}>' for cell in row
+        ) + '</tr>')
+    parts.append('</table>')
+    return ''.join(parts)
+
+
 def build_deck(notes: List[Note], deck_name: str, strict_repair: bool) -> BuildResult:
     root_id = _deck_id(deck_name)
     root_deck = genanki.Deck(root_id, deck_name)
@@ -650,6 +743,8 @@ def build_deck(notes: List[Note], deck_name: str, strict_repair: bool) -> BuildR
             fields = [note.front, _html_extra(note.extra)]
         elif note.note_type in {"basic", "basic_reverse"}:
             fields = [note.front, note.back]
+        elif note.note_type == "table":
+            fields = [note.front, _html_table(note.back), _html_extra(note.extra)]
         else:
             fields = [note.front, note.back, _html_extra(note.extra)]
 

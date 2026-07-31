@@ -44,6 +44,12 @@ Card formats (use a mix - choose the best format for each fact):
   Cloze:         Sentence with {{c1::hidden term}} here
   Cloze+extra:   Sentence with {{c1::hidden term}} ||| Extra context shown after flip
   Basic+extra:   Front ||| Back ||| Extra notes
+  Table:         Question or title on one line, then pipe-delimited rows immediately after:
+                 Compare limited vs diffuse systemic sclerosis
+                 | Feature | Limited | Diffuse |
+                 | Abs | Anti-centromere | Anti-Scl-70 |
+                 | ILD | Mild/late | Early/severe |
+                 Use for comparisons, classifications, or multi-column facts (≥2 columns, ≥2 rows)
 
 Guidelines:
 - Use cloze for single high-yield facts embedded in a sentence
