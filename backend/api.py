@@ -1005,6 +1005,71 @@ def import_pdf(req: PdfImportRequest):
 
 
 # =========================================
+# DOCX IMPORT
+# =========================================
+
+class DocxImportRequest(BaseModel):
+    docx_b64: str
+
+
+def _extract_docx_text(docx_bytes: bytes) -> str:
+    """Extract plain text from a .docx file, preserving table structure as pipe rows."""
+    try:
+        import docx as _docx
+    except ImportError:
+        raise HTTPException(500, "python-docx not installed — run: pip install python-docx")
+
+    import base64 as _b64, io as _io
+    doc = _docx.Document(_io.BytesIO(docx_bytes))
+    parts: list[str] = []
+
+    for block in doc.element.body:
+        tag = block.tag.split('}')[-1]  # strip namespace
+        if tag == 'p':
+            from docx.oxml.ns import qn
+            text = ''.join(r.text for r in block.iter(qn('w:t')))
+            if text.strip():
+                parts.append(text.strip())
+        elif tag == 'tbl':
+            # Convert table rows to pipe-delimited lines
+            from docx.oxml.ns import qn
+            rows = block.findall('.//' + qn('w:tr'))
+            table_lines = []
+            for row in rows:
+                cells = row.findall('.//' + qn('w:tc'))
+                cell_texts = []
+                for cell in cells:
+                    cell_text = ''.join(t.text or '' for t in cell.iter(qn('w:t'))).strip()
+                    cell_texts.append(cell_text)
+                table_lines.append('| ' + ' | '.join(cell_texts) + ' |')
+            if table_lines:
+                parts.append('\n'.join(table_lines))
+
+    return '\n\n'.join(parts)
+
+
+@app.post("/import/docx", dependencies=[Depends(_auth)])
+def import_docx(req: DocxImportRequest):
+    """Extract text and tables from a .docx file and parse into notes."""
+    try:
+        import base64 as _b64
+        docx_bytes = _b64.b64decode(req.docx_b64)
+    except Exception:
+        raise HTTPException(400, "docx_b64 is not valid base64")
+
+    try:
+        full_text = _extract_docx_text(docx_bytes)
+        if not full_text.strip():
+            raise HTTPException(422, "No text could be extracted from this document.")
+        notes = parse_auto(full_text)
+        return {"notes": [_from_note(n) for n in notes], "char_count": len(full_text)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"DOCX import failed: {e}")
+
+
+# =========================================
 # IMAGE IMPORT (Claude vision)
 # =========================================
 

@@ -295,6 +295,18 @@ class ApiService {
     return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
   }
 
+  Future<List<NoteModel>> importDocx(Uint8List docxBytes) async {
+    final b64 = base64Encode(docxBytes);
+    final res = await http.post(
+      Uri.parse('$_base/import/docx'),
+      headers: _headers,
+      body: jsonEncode({'docx_b64': b64}),
+    ).timeout(const Duration(seconds: 60));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
+  }
+
   Future<List<NoteModel>> importImage(Uint8List imageBytes, String mediaType) async {
     final b64 = base64Encode(imageBytes);
     final res = await http.post(

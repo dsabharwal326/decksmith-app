@@ -17,6 +17,7 @@ class _PickedFile {
   _PickedFile({required this.path, required this.name, required this.isPdf, required this.isImage});
 
   static bool _isPdfPath(String p) => p.toLowerCase().endsWith('.pdf');
+  static bool _isDocxPath(String p) => p.toLowerCase().endsWith('.docx');
   static bool _isImagePath(String p) {
     final lp = p.toLowerCase();
     return lp.endsWith('.png') || lp.endsWith('.jpg') || lp.endsWith('.jpeg') || lp.endsWith('.heic');
@@ -34,7 +35,8 @@ class _PickedFile {
     isImage: _isImagePath(path),
   );
 
-  bool get isText => !isPdf && !isImage;
+  bool get isDocx => _isDocxPath(path);
+  bool get isText => !isPdf && !isImage && !isDocx;
 }
 
 // ── screen ──────────────────────────────────────────────────────────────────
@@ -85,7 +87,8 @@ class _UploadScreenState extends State<UploadScreen> {
   bool _isAcceptedPath(String path) {
     final lp = path.toLowerCase();
     return lp.endsWith('.txt') || lp.endsWith('.tsv') || lp.endsWith('.csv') ||
-        lp.endsWith('.pdf') || lp.endsWith('.png') || lp.endsWith('.jpg') ||
+        lp.endsWith('.pdf') || lp.endsWith('.docx') ||
+        lp.endsWith('.png') || lp.endsWith('.jpg') ||
         lp.endsWith('.jpeg') || lp.endsWith('.heic');
   }
 
@@ -169,13 +172,17 @@ class _UploadScreenState extends State<UploadScreen> {
     try {
       List<NoteModel> notes = [];
 
-      // Handle binary files (PDF / image) — single-file only
+      // Handle binary files (PDF / DOCX / image) — single-file only
       final binaryFile = _files.where((f) => !f.isText).firstOrNull;
       if (binaryFile != null) {
         if (binaryFile.isPdf) {
           state.setProgress('Extracting PDF…', 0.1);
           final bytes = await File(binaryFile.path).readAsBytes();
           notes = await api.importPdf(bytes);
+        } else if (binaryFile.isDocx) {
+          state.setProgress('Extracting Word document…', 0.1);
+          final bytes = await File(binaryFile.path).readAsBytes();
+          notes = await api.importDocx(bytes);
         } else {
           state.setProgress('Reading image…', 0.1);
           final bytes = await File(binaryFile.path).readAsBytes();
@@ -242,7 +249,7 @@ class _UploadScreenState extends State<UploadScreen> {
           children: [
             Text('Generate from file', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text('Drop one or more .txt, .tsv, .csv, .pdf, or image files — multiple text files are merged into one deck',
+            Text('Drop one or more .txt, .tsv, .csv, .pdf, .docx, or image files — multiple text files are merged into one deck',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             const SizedBox(height: 24),
 
@@ -256,7 +263,7 @@ class _UploadScreenState extends State<UploadScreen> {
                 final valid = paths.where(_isAcceptedPath).toList();
                 if (valid.isEmpty) {
                   if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Drop .txt, .tsv, .csv, .pdf, or image files'), behavior: SnackBarBehavior.floating));
+                    const SnackBar(content: Text('Drop .txt, .tsv, .csv, .pdf, .docx, or image files'), behavior: SnackBarBehavior.floating));
                   return;
                 }
                 setState(() => _addFiles(valid));
@@ -294,7 +301,7 @@ class _UploadScreenState extends State<UploadScreen> {
                           Text(_draggingCard ? 'Drop it!' : 'Tap or drop card files',
                             style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
                           const SizedBox(height: 4),
-                          Text('Anki text, TSV, CSV, PDF, PNG/JPG — multi-file merges into one deck',
+                          Text('Anki text, TSV, CSV, PDF, DOCX, PNG/JPG — multi-file merges into one deck',
                             style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant.withOpacity(0.6))),
                         ]),
                 ),
@@ -465,6 +472,7 @@ class _FileList extends StatelessWidget {
 
   IconData _icon(_PickedFile f) {
     if (f.isPdf) return Icons.picture_as_pdf_rounded;
+    if (f.isDocx) return Icons.description_rounded;
     if (f.isImage) return Icons.image_rounded;
     final ext = f.name.split('.').last.toLowerCase();
     if (ext == 'tsv') return Icons.table_rows_rounded;
