@@ -96,15 +96,8 @@ class _UploadScreenState extends State<UploadScreen> {
     bool addedFirst = _files.isEmpty;
     for (final path in paths) {
       if (!_isAcceptedPath(path)) continue;
-      // Only one PDF/image allowed at a time; text files can stack
-      final pf = _PickedFile.fromPath(path);
-      if (!pf.isText && _files.isNotEmpty) {
-        // Replacing binary with another binary or adding binary to text list — warn
-        if (_files.any((f) => !f.isText)) {
-          _files.removeWhere((f) => !f.isText);
-        }
-      }
       if (!_files.any((f) => f.path == path)) {
+        final pf = _PickedFile.fromPath(path);
         _files.add(pf);
         if (addedFirst) {
           _suggestDeckName(pf.name);
@@ -172,26 +165,28 @@ class _UploadScreenState extends State<UploadScreen> {
     try {
       List<NoteModel> notes = [];
 
-      // Handle binary files (PDF / DOCX / image) — single-file only
-      final binaryFile = _files.where((f) => !f.isText).firstOrNull;
-      if (binaryFile != null) {
-        if (binaryFile.isPdf) {
-          state.setProgress('Extracting PDF…', 0.1);
-          final bytes = await File(binaryFile.path).readAsBytes();
-          notes = await api.importPdf(bytes);
-        } else if (binaryFile.isDocx) {
-          state.setProgress('Extracting Word document…', 0.1);
-          final bytes = await File(binaryFile.path).readAsBytes();
-          notes = await api.importDocx(bytes);
+      // Handle binary files (PDF / DOCX / image) — all files processed and merged
+      final binaryFiles = _files.where((f) => !f.isText).toList();
+      for (int i = 0; i < binaryFiles.length; i++) {
+        final bf = binaryFiles[i];
+        final label = binaryFiles.length > 1 ? ' (${i + 1}/${binaryFiles.length})' : '';
+        final bytes = await File(bf.path).readAsBytes();
+        List<NoteModel> binaryNotes;
+        if (bf.isPdf) {
+          state.setProgress('Extracting PDF$label…', 0.05 + 0.3 * i / binaryFiles.length);
+          binaryNotes = await api.importPdf(bytes);
+        } else if (bf.isDocx) {
+          state.setProgress('Extracting Word doc$label…', 0.05 + 0.3 * i / binaryFiles.length);
+          binaryNotes = await api.importDocx(bytes);
         } else {
-          state.setProgress('Reading image…', 0.1);
-          final bytes = await File(binaryFile.path).readAsBytes();
-          final lp = binaryFile.path.toLowerCase();
+          state.setProgress('Reading image$label…', 0.05 + 0.3 * i / binaryFiles.length);
+          final lp = bf.path.toLowerCase();
           final mediaType = lp.endsWith('.png') ? 'image/png'
               : lp.endsWith('.jpg') || lp.endsWith('.jpeg') ? 'image/jpeg'
               : 'image/heic';
-          notes = await api.importImage(bytes, mediaType);
+          binaryNotes = await api.importImage(bytes, mediaType);
         }
+        notes = [...notes, ...binaryNotes];
       }
 
       // Handle text files — read and concatenate
@@ -249,7 +244,7 @@ class _UploadScreenState extends State<UploadScreen> {
           children: [
             Text('Generate from file', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text('Drop one or more .txt, .tsv, .csv, .pdf, .docx, or image files — multiple text files are merged into one deck',
+            Text('Drop one or more .txt, .tsv, .csv, .pdf, .docx, or image files — all files are merged into one deck',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             const SizedBox(height: 24),
 
