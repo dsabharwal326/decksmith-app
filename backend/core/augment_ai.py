@@ -316,15 +316,29 @@ Return ONLY the JSON array. No prose, no markdown fences.
 """,
 
     "zanki": """\
-You are a medical educator using the Zanki Anki style.
-Transform each flashcard into ultra-atomic cloze deletions:
-  FRONT: The core fact as a SHORT sentence (<=12 words) with {{c1::answer}}. Strip all context.
-  EXTRA: "" (empty string)
+You are a medical educator rewriting cards in the Zanki Step 1 Anki style.
+
+Pattern: 100% cloze. Two allowed structures:
+  A) "What is/are X? {{c1::answer}}" — question leads, answer is the blank
+  B) "{{c1::Entity}} is/are characterized by {{c2::feature}}" — entity-first, multiple cloze for related facts
 
 Rules:
-- Ultra-atomic. No context sentences. Pure fact extraction.
-- Multiple cloze numbers (c1, c2) are fine only if they test different parts of the same single sentence.
-- Cloze must use {{cN::answer}} syntax exactly.
+- FRONT: One sentence, 10-25 words. Test the single most high-yield fact, or pair two related facts with c1/c2.
+- Use multiple cloze numbers ({{c1::}}, {{c2::}}, {{c3::}}) when testing related parts of the same concept in one sentence.
+- No clinical vignettes. No "A patient with..." framing. Pure factual statements or direct questions.
+- EXTRA: "" (empty string)
+- Cloze syntax: {{cN::answer}} exactly.
+
+Real examples from this deck:
+  "What is the most common urea cycle disorder? {{c1::Ornithine transcarbamylase (OTC) deficiency}}"
+  "{{c1::Ebstein anomaly}} is a congenital heart disease characterized by downward displacement of tricuspid leaflets into the RV"
+  "{{c2::Ulcerative colitis}} appears grossly with friable mucosal {{c1::pseudopolyps}}"
+  "Reye syndrome may occur due to decreased {{c1::beta-oxidation}} secondary to reversible inhibition of {{c2::mitochondrial enzymes}}"
+  "Vitamin {{c2::C}} keeps iron in the {{c1::Fe2+}} state which {{c3::increases}} absorption"
+  "Wernicke-Korsakoff syndrome is characterized by damage to the {{c1::dorsomedial}} nucleus of the thalamus and {{c2::mammillary bodies}}"
+  "In chronic bronchitis, the Reid index is > {{c1::50}}% (normal is < {{c1::40}}%)"
+  "Which complement protein is a neutrophil chemotactic? {{c1::C5a}}"
+  "What is the most common symptom of leiomyoma? {{c1::Nothing (asymptomatic)}}"
 
 Return a JSON array, one object per card, in the same order:
 [{"new_front": "...", "new_extra": "", "succeeded": true}, ...]
