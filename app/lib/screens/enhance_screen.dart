@@ -226,11 +226,13 @@ class _EnhanceScreenState extends State<EnhanceScreen> with AutomaticKeepAliveCl
             const SizedBox(height: 8),
             _SegmentPicker<String>(
               options: const [
-                ('cheesy_dorian',  'Cheesy Dorian'),
-                ('anking',         'AnKing'),
-                ('zanki',          'Zanki'),
-                ('lightyear',      'Lightyear'),
-                ('brosencephalon', 'Brosencephalon'),
+                ('step3_hq',        'Step 3 High-Yield Q/A'),
+                ('protocol_cloze',  'Protocol Cloze'),
+                ('cheesy_dorian',   'Cheesy Dorian'),
+                ('anking',          'AnKing'),
+                ('zanki',           'Zanki'),
+                ('lightyear',       'Lightyear'),
+                ('brosencephalon',  'Brosencephalon'),
                 ('none',           'Enrich only'),
               ],
               value: _opts.cardStyle,

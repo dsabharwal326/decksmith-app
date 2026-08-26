@@ -46,9 +46,13 @@ class ApkgImportResult:
 # =========================================
 
 def _strip_html(text: str) -> str:
-    """Very light HTML tag stripper — no dependency on lxml/BeautifulSoup."""
-    import re
-    return re.sub(r"<[^>]+>", "", text).strip()
+    """Strip HTML tags without destroying medical content like Na <135 (>145 = hyper)."""
+    import re, html as _html
+    # Only strip tags that start with a letter (real HTML), not numeric comparisons
+    text = re.sub(r'</?[a-zA-Z][a-zA-Z0-9]*[^>]*/?>',  ' ', text)
+    text = re.sub(r'&nbsp;', ' ', text)
+    text = _html.unescape(text)
+    return re.sub(r'  +', ' ', text).strip()
 
 
 def _front_identity(front: str) -> str:

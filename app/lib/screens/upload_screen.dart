@@ -18,6 +18,7 @@ class _PickedFile {
 
   static bool _isPdfPath(String p) => p.toLowerCase().endsWith('.pdf');
   static bool _isDocxPath(String p) => p.toLowerCase().endsWith('.docx');
+  static bool _isApkgPath(String p) => p.toLowerCase().endsWith('.apkg');
   static bool _isImagePath(String p) {
     final lp = p.toLowerCase();
     return lp.endsWith('.png') || lp.endsWith('.jpg') || lp.endsWith('.jpeg') || lp.endsWith('.heic');
@@ -36,7 +37,8 @@ class _PickedFile {
   );
 
   bool get isDocx => _isDocxPath(path);
-  bool get isText => !isPdf && !isImage && !isDocx;
+  bool get isApkg => _isApkgPath(path);
+  bool get isText => !isPdf && !isImage && !isDocx && !isApkg;
 }
 
 // ── screen ──────────────────────────────────────────────────────────────────
@@ -53,6 +55,7 @@ class _UploadScreenState extends State<UploadScreen> {
   bool _draggingCard = false;
   bool _draggingApkg = false;
   bool _skipDupes = false;
+  bool _questionMode = false;   // true = MCQ screenshot → cloze cards
   String? _detectedStep;
 
   @override
@@ -87,7 +90,7 @@ class _UploadScreenState extends State<UploadScreen> {
   bool _isAcceptedPath(String path) {
     final lp = path.toLowerCase();
     return lp.endsWith('.txt') || lp.endsWith('.tsv') || lp.endsWith('.csv') ||
-        lp.endsWith('.pdf') || lp.endsWith('.docx') ||
+        lp.endsWith('.pdf') || lp.endsWith('.docx') || lp.endsWith('.apkg') ||
         lp.endsWith('.png') || lp.endsWith('.jpg') ||
         lp.endsWith('.jpeg') || lp.endsWith('.heic');
   }
@@ -178,13 +181,21 @@ class _UploadScreenState extends State<UploadScreen> {
         } else if (bf.isDocx) {
           state.setProgress('Extracting Word doc$label…', 0.05 + 0.3 * i / binaryFiles.length);
           binaryNotes = await api.importDocx(bytes);
+        } else if (bf.isApkg) {
+          state.setProgress('Reading Anki deck$label…', 0.05 + 0.3 * i / binaryFiles.length);
+          binaryNotes = await api.importApkg(bytes);
         } else {
-          state.setProgress('Reading image$label…', 0.05 + 0.3 * i / binaryFiles.length);
           final lp = bf.path.toLowerCase();
           final mediaType = lp.endsWith('.png') ? 'image/png'
               : lp.endsWith('.jpg') || lp.endsWith('.jpeg') ? 'image/jpeg'
               : 'image/heic';
-          binaryNotes = await api.importImage(bytes, mediaType);
+          if (_questionMode) {
+            state.setProgress('Analysing question$label…', 0.05 + 0.3 * i / binaryFiles.length);
+            binaryNotes = await api.importQuestionImage(bytes, mediaType);
+          } else {
+            state.setProgress('Reading image$label…', 0.05 + 0.3 * i / binaryFiles.length);
+            binaryNotes = await api.importImage(bytes, mediaType);
+          }
         }
         notes = [...notes, ...binaryNotes];
       }
@@ -211,6 +222,12 @@ class _UploadScreenState extends State<UploadScreen> {
             .map((n) => NoteModel.fromJson(n as Map<String, dynamic>))
             .toList();
         state.dupesSkipped = dedupeResult['duplicate_count'] as int;
+      }
+
+      // Detect step from notes if we didn't already detect from a text file
+      if (_detectedStep == null && notes.isNotEmpty) {
+        final sample = notes.take(30).map((n) => '${n.front} ${n.back}').join(' ');
+        _detectStep(sample.substring(0, sample.length.clamp(0, 2000)));
       }
 
       state.setProgress('Validating…', 0.8);
@@ -244,9 +261,33 @@ class _UploadScreenState extends State<UploadScreen> {
           children: [
             Text('Generate from file', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text('Drop one or more .txt, .tsv, .csv, .pdf, .docx, or image files — all files are merged into one deck',
+            Text('Drop one or more .txt, .tsv, .csv, .pdf, .docx, .apkg, or image files — all files are merged into one deck',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+
+            // ── Image mode toggle ─────────────────────────────────────────
+            Row(
+              children: [
+                Icon(Icons.image_search_rounded, size: 16, color: cs.onSurfaceVariant),
+                const SizedBox(width: 8),
+                Text('Image mode:', style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                const SizedBox(width: 12),
+                SegmentedButton<bool>(
+                  style: SegmentedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    textStyle: tt.labelSmall,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  segments: const [
+                    ButtonSegment(value: false, label: Text('General'), icon: Icon(Icons.auto_awesome_rounded, size: 14)),
+                    ButtonSegment(value: true,  label: Text('Question screenshot'), icon: Icon(Icons.quiz_rounded, size: 14)),
+                  ],
+                  selected: {_questionMode},
+                  onSelectionChanged: (s) => setState(() => _questionMode = s.first),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
 
             // ── Drop zone ────────────────────────────────────────────────
             DropTarget(
@@ -258,7 +299,7 @@ class _UploadScreenState extends State<UploadScreen> {
                 final valid = paths.where(_isAcceptedPath).toList();
                 if (valid.isEmpty) {
                   if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Drop .txt, .tsv, .csv, .pdf, .docx, or image files'), behavior: SnackBarBehavior.floating));
+                    const SnackBar(content: Text('Drop .txt, .tsv, .csv, .pdf, .docx, .apkg, or image files'), behavior: SnackBarBehavior.floating));
                   return;
                 }
                 setState(() => _addFiles(valid));
@@ -293,10 +334,14 @@ class _UploadScreenState extends State<UploadScreen> {
                           Icon(Icons.upload_file_rounded, size: 32,
                             color: _draggingCard ? cs.primary : cs.onSurfaceVariant),
                           const SizedBox(height: 10),
-                          Text(_draggingCard ? 'Drop it!' : 'Tap or drop card files',
+                          Text(_draggingCard ? 'Drop it!'
+                              : _questionMode ? 'Drop question screenshots'
+                              : 'Tap or drop card files',
                             style: tt.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
                           const SizedBox(height: 4),
-                          Text('Anki text, TSV, CSV, PDF, DOCX, PNG/JPG — multi-file merges into one deck',
+                          Text(_questionMode
+                              ? 'PNG/JPG screenshots of MCQs → high-yield cloze cards'
+                              : 'Anki text, TSV, CSV, PDF, DOCX, PNG/JPG — multi-file merges into one deck',
                             style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant.withOpacity(0.6))),
                         ]),
                 ),
@@ -468,6 +513,7 @@ class _FileList extends StatelessWidget {
   IconData _icon(_PickedFile f) {
     if (f.isPdf) return Icons.picture_as_pdf_rounded;
     if (f.isDocx) return Icons.description_rounded;
+    if (f.isApkg) return Icons.style_rounded;
     if (f.isImage) return Icons.image_rounded;
     final ext = f.name.split('.').last.toLowerCase();
     if (ext == 'tsv') return Icons.table_rows_rounded;

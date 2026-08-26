@@ -260,16 +260,28 @@ def _augment_batch(
 
 _STYLE_SYSTEM_PROMPTS: dict = {
     "cheesy_dorian": """\
-You are a medical educator using the Cheesy Dorian Anki style.
-Transform each flashcard into:
-  FRONT: A brief clinical vignette (1–2 sentences) that ends with a cloze deletion testing the key concept: {{c1::answer}}
-  EXTRA: "Context: [2–3 sentences explaining WHY — mechanism, pathophysiology, or clinical pearl]"
+You are a medical educator rewriting cards in the Cheesy Dorian Anki style.
+
+Pattern: Every card is a cloze. The question leads, and the answer is hidden inline.
+Two allowed sentence structures:
+  A) "What is/are X? {{c1::answer}}"
+  B) "[Clinical fact or eponym] = {{c1::diagnosis/answer}}"
 
 Rules:
-- Cloze deletion must use {{c1::answer}} syntax exactly.
-- Keep vignettes realistic but concise. Put the blank at the end or near the end.
-- Context in EXTRA should explain the reasoning, not restate the question.
-- If no meaningful context can be added, set extra to "".
+- FRONT: A clear question or factual statement with {{c1::answer}} inline. 10-20 words max.
+- EXTRA: 1-2 sentence mnemonic, mechanism, or clinical pearl. Empty string "" if nothing useful to add.
+- Never put the cloze deletion at the very start of the sentence.
+- If multiple facts exist, pick the single most testable one.
+- Keep cloze syntax exactly: {{c1::answer}}
+
+Real examples from this deck:
+  "What is the most common cause of postpartum hemorrhage? {{c1::Uterine atony (90%)}}"
+  "What is the contraindication for Prostaglandin F2 alpha in postpartum hemorrhage? {{c1::Asthma}}"
+  "Dementia + visual hallucinations followed by early Parkinsonism = {{c1::Lewy body dementia}}"
+  "corkscrew esophagus = {{c1::diffuse esophageal spasm}}"
+  "Bell's palsy involves a {{c1::peripheral}} lesion of the facial nerve (VII)."
+  "What gross motor milestone is expected at 18 months? {{c1::Kicks a ball}}, runs"
+  "What birth weight is considered macrosomia? {{c1::> 4500 g}}"
 
 Return a JSON array, one object per card, in the same order:
 [{"new_front": "...", "new_extra": "...", "succeeded": true}, ...]
@@ -277,15 +289,26 @@ Return ONLY the JSON array. No prose, no markdown fences.
 """,
 
     "anking": """\
-You are a medical educator using the AnKing Anki style.
-Transform each flashcard into:
-  FRONT: One atomic fact tested with exactly one cloze deletion {{c1::answer}}. Under 15 words. No clinical scenarios.
-  EXTRA: "" (empty string)
+You are a medical educator rewriting cards in the AnKing Anki style.
+
+Pattern: Cloze cards that test one or more related facts in a single sentence. Use multiple cloze
+numbers ({{c1::}}, {{c2::}}, {{c3::}}) when testing related parts of the same concept.
 
 Rules:
-- One fact, one blank. Strip all clinical scenario framing.
-- If the original card has multiple facts, keep only the single most high-yield one.
-- Cloze deletion must use {{c1::answer}} syntax exactly.
+- FRONT: A complete sentence with cloze deletions. 10-25 words. Can be a question or a statement.
+- For related paired facts (drug + MOA, organism + disease), test both in one card with {{c1::}} and {{c2::}}.
+- Optional hint syntax: {{c2::answer::(hint to show in blank)}} — use sparingly for disambiguation.
+- EXTRA: "" (empty string)
+- Cloze syntax: {{cN::answer}} or {{cN::answer::(hint)}}
+
+Real examples from this deck:
+  "One possible treatment for a growth hormone adenoma is a(n) {{c1::somatostatin}} analog, such as {{c1::octreotide}}"
+  "In general, sex chromosome disorders (e.g. Turner's, Klinefelter) present with {{c1::decreased}} testosterone and/or estrogen"
+  "What demographic is most commonly affected by PCOS? {{c1::Obese, young women of reproductive age}}"
+  "{{c1::2nd degree Mobitz type I (Wenckebach)::(aka)}} AV block is characterized by progressive lengthening of the {{c2::PR interval}}"
+  "What is the diagnosis in an infant with an omega-shaped epiglottis and collapse of the supraglottic structures? {{c1::Laryngomalacia}}"
+  "Which subtypes of HPV are covered by the quadrivalent vaccine? {{c1::HPV6, 11, 16, 18}}"
+  "In {{c1::red blood}} cells, {{c2::CO2}} is combined with {{c2::H2O}} via {{c3::carbonic anhydrase}}"
 
 Return a JSON array, one object per card, in the same order:
 [{"new_front": "...", "new_extra": "", "succeeded": true}, ...]
@@ -295,7 +318,7 @@ Return ONLY the JSON array. No prose, no markdown fences.
     "zanki": """\
 You are a medical educator using the Zanki Anki style.
 Transform each flashcard into ultra-atomic cloze deletions:
-  FRONT: The core fact as a SHORT sentence (≤12 words) with {{c1::answer}}. Strip all context.
+  FRONT: The core fact as a SHORT sentence (<=12 words) with {{c1::answer}}. Strip all context.
   EXTRA: "" (empty string)
 
 Rules:
@@ -309,32 +332,107 @@ Return ONLY the JSON array. No prose, no markdown fences.
 """,
 
     "lightyear": """\
-You are a medical educator using the Lightyear Anki style.
-Transform each flashcard into concept-relationship cloze cards:
-  FRONT: Cause→effect or concept→result (under 20 words) with {{c1::answer}}. Start with the concept, not a patient vignette.
-  EXTRA: 1–2 sentences explaining the mechanism or rationale. Omit if not helpful.
+You are a medical educator rewriting cards in the Lightyear Anki style.
+
+Pattern: Mostly basic (non-cloze) Q/A cards. Short direct question on the front, concise answer on the back.
+Use basic format unless the concept genuinely benefits from cloze fill-in.
 
 Rules:
-- Express as a direct relationship: "[mechanism] causes/leads to {{c1::result}}."
-- Cloze must use {{c1::answer}} syntax exactly.
+- FRONT: "What is X?", "Which X?", "What are the Y for Z?" — clean question, under 12 words, no vignette.
+- BACK: Short factual answer. Can be a list (one item per line). 1-8 words per item typically.
+- EXTRA: "" (empty string)
+- Prefer basic (Q/A) over cloze. Only use cloze if the card tests a word embedded in a fact.
+- No clinical vignettes, no "A patient with...", no lengthy sentences.
 
-Return a JSON array, one object per card, in the same order:
-[{"new_front": "...", "new_extra": "...", "succeeded": true}, ...]
+Real examples from this deck (BASIC format):
+  Q: What are the treatments for ITP? | A: Steroids / IVIG / Rituximab / Splenectomy
+  Q: Which mitral papillary muscle has a dual blood supply? | A: Anterolateral papillary muscle
+  Q: What bacteria are branching and filamentous? | A: Nocardia / Actinomyces
+  Q: Which inherited hypercoagulability disease presents as heparin resistance? | A: Antithrombin III deficiency
+  Q: What is a common pharmacological cause of avascular necrosis of the hip? | A: Steroid therapy
+  Q: What is the C3 convertase in the lectin complement pathway? | A: C2b4b
+  Q: Which amino acids are purely ketogenic? | A: Leucine / Lysine
+
+Return a JSON array, one object per card, in the same order.
+For basic cards: {"new_front": "Question?", "new_back": "Answer", "new_extra": "", "succeeded": true}
+For cloze cards: {"new_front": "Sentence with {{c1::answer}}", "new_extra": "", "succeeded": true}
 Return ONLY the JSON array. No prose, no markdown fences.
 """,
 
     "brosencephalon": """\
-You are a medical educator using the Brosencephalon Anki style.
-Transform each flashcard into a dense, textbook-style cloze card:
-  FRONT: A complete educational sentence (20–35 words) embedding pathophysiology context, with one or more {{cN::answer}} cloze deletions.
-  EXTRA: Detailed textbook paragraph (3–5 sentences): mechanism, clinical presentation, high-yield associations, comparison with similar conditions.
+You are a medical educator rewriting cards in the Brosencephalon Anki style.
+
+Pattern: Mix of entity-first cloze cards and short basic Q/A cards.
+- Cloze style: Start with the drug/disease/concept name as the blank, then describe it.
+  Example: "{{c1::Trimethoprim}} is an antibiotic that inhibits bacterial dihydrofolate reductase."
+- Basic style: Very short front (a term, a receptor, a drug), dense back with all facts.
+  Example: Front: "alpha1" | Back: "G-protein: q — increases vascular smooth muscle contraction, pupillary dilation"
 
 Rules:
-- Cloze deletions use {{c1::answer}}, {{c2::answer}}, etc. syntax exactly.
-- EXTRA should read like a mini-textbook entry — comprehensive, not a bullet list.
+- FRONT: Either (A) entity-first cloze: "{{c1::Entity}} is/does X" — 15-30 words; or (B) ultra-short term/name (1-5 words).
+- For entity-first cloze: the entity (drug, disease, gene) is {{c1::}}; include its MOA or defining feature.
+- For basic: front is just the term; back is all key facts in dense form (G-protein type, effects, drug class, etc.).
+- EXTRA: "" (empty string). All facts go in BACK for basic, or in the sentence for cloze.
+- Use cloze for drugs and diseases. Use basic for receptors, lab values, and pure associations.
+
+Real examples from this deck:
+  Cloze: "{{c1::Trimethoprim}} is an antibiotic that inhibits cytoplasmic bacterial Dihydrofolate Reductase."
+  Cloze: "{{c1::Phenoxybenzamine}} is an alpha-adrenergic blocker primarily used to treat Pheochromocytoma as a pre-operative prep."
+  Cloze: "{{c1::Janeway lesions}} are non-painful lesions on the palms and soles that manifest in infectious endocarditis."
+  Basic: F: "alpha1" | B: "G-protein: q — increases vascular smooth muscle contraction, increases pupillary dilator contraction"
+  Basic: F: "Beta1" | B: "G-protein: s — increases heart rate, contractility, renin release, lipolysis"
+  Basic: F: "Radiation exposure" | B: "Leukemia, sarcoma, papillary thyroid cancer, breast cancer"
+
+Return a JSON array, one object per card, in the same order.
+For cloze: {"new_front": "{{c1::Entity}} is...", "new_extra": "", "succeeded": true}
+For basic: {"new_front": "Short term", "new_back": "Dense facts", "new_extra": "", "succeeded": true}
+Return ONLY the JSON array. No prose, no markdown fences.
+""",
+
+    "step3_hq": """\
+You are a USMLE Step 3 flashcard writer. Rewrite each card in the high-yield Q/A style used by top Step 3 decks.
+
+Style rules:
+- FRONT: A direct question, typically "What is the most common/important/leading X for Y?" or "What is the first-line X for Y?" Keep under 18 words.
+- BACK: Concise factual answer, 1–6 words when possible. Never a full sentence unless truly necessary.
+- EXTRA: Always empty string "".
+- No clinical vignettes, no "A patient with...", no cloze syntax.
+- If a cloze card arrives, convert it to a Q/A pair.
+
+Real examples of this style:
+Q: What is the most important modifiable risk factor for coronary artery disease? | A: Smoking
+Q: What is the most common cause of death in acromegaly? | A: Heart failure
+Q: What is the leading risk factor for bladder cancer? | A: Smoking
+Q: What is the most common cause of death in kidney transplant recipients? | A: Cardiovascular disease
+Q: What is the most serious complication of acute rheumatic fever? | A: Carditis / pancarditis
+Q: When is elective AAA repair indicated by size? | A: Diameter >5.5 cm
+Q: What rapid AAA growth rate is an indication for repair? | A: >0.5 cm in 6 months or >1 cm in 1 year
 
 Return a JSON array, one object per card, in the same order:
-[{"new_front": "...", "new_extra": "...", "succeeded": true}, ...]
+[{"new_front": "What is...", "new_back": "Short answer", "new_extra": "", "succeeded": true}, ...]
+Return ONLY the JSON array. No prose, no markdown fences.
+""",
+
+    "protocol_cloze": """\
+You are a USMLE Step 3 flashcard writer. Rewrite each card as a clean protocol/timing cloze card, matching the style of top pregnancy and testing-protocol decks.
+
+Style rules:
+- FRONT: A complete sentence with key facts replaced by {{c1::answer}}, {{c2::answer}}, etc.
+- Use cloze for: timing (weeks, doses), specific tests ordered, specific thresholds, named tests/agents.
+- Sentence structure: "[Clinical scenario] → {{c1::action/test}}" or "At {{c1::timepoint}}, [what happens]."
+- Keep sentences concise (≤20 words). No multi-sentence fronts.
+- EXTRA: Always empty string "".
+
+Real examples of this style:
+- Decreased fetal movement → {{c1::nonstress test}}.
+- At {{c1::24–28 weeks}}, perform the {{c2::1-hour 50-g glucose challenge test}}.
+- Suspected PROM → {{c1::speculum exam}}, {{c2::nitrazine}}, and {{c3::ferning}}.
+- STEC/EHEC causes {{c1::bloody diarrhea}} and can lead to HUS.
+- Campylobacter infection can precede {{c1::Guillain-Barré syndrome}}.
+- Nonreactive NST → {{c1::biophysical profile}}.
+
+Return a JSON array, one object per card, in the same order:
+[{"new_front": "{{c1::...}} sentence", "new_extra": "", "succeeded": true}, ...]
 Return ONLY the JSON array. No prose, no markdown fences.
 """,
 }
@@ -342,8 +440,10 @@ Return ONLY the JSON array. No prose, no markdown fences.
 _STYLE_BATCH_SUFFIX = """
 
 You will receive multiple flashcards. Return a JSON array with one object per card, in the same order.
-Each object: {"new_front": "...", "new_extra": "...", "succeeded": true}
-If you cannot meaningfully rewrite a card, set "succeeded": false and keep "new_front"/"new_extra" as empty strings.
+Each object: {"new_front": "...", "new_back": "", "new_extra": "...", "succeeded": true}
+Include "new_back" only when producing a basic (non-cloze) card — set it to the answer text.
+For cloze cards, set "new_back" to "" (empty string).
+If you cannot meaningfully rewrite a card, set "succeeded": false and keep all text fields as empty strings.
 Return ONLY the JSON array. No prose, no markdown fences.
 """
 
@@ -395,12 +495,13 @@ def style_rewrite_batch(
             item = items[j]
             results.append({
                 "new_front": str(item.get("new_front", "") or "").strip(),
+                "new_back":  str(item.get("new_back",  "") or "").strip(),
                 "new_extra": str(item.get("new_extra", "") or "").strip(),
                 "succeeded": bool(item.get("succeeded", True)),
                 "error": str(item.get("error", "") or ""),
             })
         else:
-            results.append({"new_front": "", "new_extra": "", "succeeded": False, "error": "missing from batch response"})
+            results.append({"new_front": "", "new_back": "", "new_extra": "", "succeeded": False, "error": "missing from batch response"})
     return results
 
 

@@ -319,6 +319,18 @@ class ApiService {
     return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
   }
 
+  Future<List<NoteModel>> importQuestionImage(Uint8List imageBytes, String mediaType) async {
+    final b64 = base64Encode(imageBytes);
+    final res = await http.post(
+      Uri.parse('$_base/import/image/question'),
+      headers: _headers,
+      body: jsonEncode({'image_b64': b64, 'media_type': mediaType, 'provider': state.selectedProvider}),
+    ).timeout(const Duration(seconds: 90));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
+  }
+
   Future<List<NoteModel>> importApkg(Uint8List apkgBytes) async {
     final b64 = base64Encode(apkgBytes);
     final res = await http.post(
@@ -329,6 +341,31 @@ class ApiService {
     _check(res);
     final data = jsonDecode(res.body) as Map;
     return (data['notes'] as List).map((n) => NoteModel.fromJson(n as Map<String, dynamic>)).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> analyzeCards(List<NoteModel> notes) async {
+    final res = await http.post(
+      Uri.parse('$_base/analyze'),
+      headers: _headers,
+      body: jsonEncode({
+        'notes': _serializeNotes(notes),
+        'provider': state.selectedProvider,
+      }),
+    ).timeout(const Duration(seconds: 120));
+    _check(res);
+    final data = jsonDecode(res.body) as Map;
+    return (data['results'] as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> repairDeck(Uint8List apkgBytes, String deckName) async {
+    final b64 = base64Encode(apkgBytes);
+    final res = await http.post(
+      Uri.parse('$_base/repair'),
+      headers: _headers,
+      body: jsonEncode({'apkg_b64': b64, 'deck_name': deckName}),
+    ).timeout(const Duration(seconds: 60));
+    _check(res);
+    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
   Future<AugmentGenerateResult> augmentGenerate(

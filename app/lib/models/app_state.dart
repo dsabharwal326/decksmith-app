@@ -9,7 +9,7 @@ export '../services/backend_launcher.dart' show BackendStatus;
 
 enum AppPhase { idle, processing, review, exporting }
 
-enum SidebarPage { upload, topic, enhance, merge, history, settings }
+enum SidebarPage { upload, topic, enhance, merge, repair, history, settings }
 
 enum ViewMode { compact, hybrid, full }
 

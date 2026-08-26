@@ -326,6 +326,7 @@ def _run_augment_job(job_id: str, req_notes, opts, provider, model):
                     "note": _from_note(note),
                     "identity": _ni(note),
                     "new_front": r.get("new_front", ""),
+                    "new_back":  r.get("new_back",  ""),
                     "new_extra": r.get("new_extra", ""),
                     "succeeded": r.get("succeeded", False),
                     "error": r.get("error", ""),
@@ -335,7 +336,7 @@ def _run_augment_job(job_id: str, req_notes, opts, provider, model):
                     "style_rewrite": True,
                     "note": _from_note(note),
                     "identity": _ni(note),
-                    "new_front": "", "new_extra": "",
+                    "new_front": "", "new_back": "", "new_extra": "",
                     "succeeded": False, "error": "skipped: deck too large",
                 })
 
@@ -800,6 +801,7 @@ def augment_apply(req: AugmentApplyRequest):
                 identity = p_dict.get("identity", "")
                 rewrite_map[identity] = (
                     p_dict.get("new_front", ""),
+                    p_dict.get("new_back",  ""),
                     p_dict.get("new_extra", ""),
                 )
 
@@ -808,13 +810,13 @@ def augment_apply(req: AugmentApplyRequest):
         for n in notes:
             identity = _ni(n)
             if identity in rewrite_map:
-                new_front, new_extra = rewrite_map[identity]
+                new_front, new_back, new_extra = rewrite_map[identity]
                 if new_front:
-                    # Preserve note_type; if new_front has cloze syntax, use cloze
                     import re as _re
                     has_cloze = bool(_re.search(r"\{\{c\d+::", new_front))
-                    new_type = "cloze" if has_cloze else n.note_type
-                    n = Note(note_type=new_type, front=new_front, back=n.back, extra=new_extra, tags=n.tags)
+                    new_type = "cloze" if has_cloze else "basic"
+                    back = new_back if new_back else (n.back if not has_cloze else "")
+                    n = Note(note_type=new_type, front=new_front, back=back, extra=new_extra, tags=n.tags)
             result_notes.append(n)
         return {"notes": [_from_note(n) for n in result_notes]}
 
@@ -908,6 +910,167 @@ def import_apkg(req: ImportRequest):
         for n in result.notes
     ]
     return {"notes": notes, "count": len(notes)}
+
+
+class RepairRequest(BaseModel):
+    apkg_b64: str
+    deck_name: str = ""
+
+
+@app.post("/repair", dependencies=[Depends(_auth)])
+def repair_deck(req: RepairRequest):
+    """
+    Import an .apkg, validate every note, auto-fix fixable ones, drop invalid ones.
+    Returns the cleaned .apkg (base64) plus a report of what was changed.
+    """
+    import base64 as _b64, tempfile
+    try:
+        apkg_bytes = _b64.b64decode(req.apkg_b64)
+    except Exception:
+        raise HTTPException(400, "apkg_b64 is not valid base64")
+
+    result = read_apkg(apkg_bytes)
+    if result.failed:
+        raise HTTPException(422, f"Could not read .apkg: {result.error}")
+
+    raw_notes = [
+        Note(
+            note_type="basic_extra" if n.note_type == "basic" else n.note_type,
+            front=n.front, back=n.back, extra="", tags=(),
+            guid=n.guid or None,
+        )
+        for n in result.notes
+    ]
+
+    validation = validate_notes(raw_notes)
+
+    kept: list[Note] = []
+    fixed_count = 0
+    removed: list[dict] = []
+
+    for i, (note, vr) in enumerate(zip(raw_notes, validation)):
+        if vr.status == "valid":
+            kept.append(note)
+        elif vr.status == "fixable" and vr.fixed_note:
+            kept.append(vr.fixed_note)
+            fixed_count += 1
+        else:
+            removed.append({
+                "index": i,
+                "front": note.front[:120],
+                "reason": vr.error or "invalid",
+            })
+
+    deck_name = req.deck_name or (result.deck_names[0] if result.deck_names else "Repaired Deck")
+    build_result = build_deck(kept, deck_name=deck_name, strict_repair=False)
+
+    package = genanki.Package(list(build_result.decks))
+    with tempfile.NamedTemporaryFile(suffix=".apkg", delete=False) as tmp:
+        package.write_to_file(tmp.name)
+        cleaned_bytes = Path(tmp.name).read_bytes()
+    Path(tmp.name).unlink(missing_ok=True)
+
+    return {
+        "apkg_b64": _b64.b64encode(cleaned_bytes).decode(),
+        "deck_name": deck_name,
+        "original_count": len(raw_notes),
+        "kept_count": len(kept),
+        "fixed_count": fixed_count,
+        "removed_count": len(removed),
+        "removed": removed,
+    }
+
+
+class AnalyzeRequest(BaseModel):
+    notes: List[NoteSchema]
+    provider: str = ""
+    model: str = ""
+
+
+@app.post("/analyze", dependencies=[Depends(_auth)])
+def analyze_cards(
+    req: AnalyzeRequest,
+    x_anthropic_key: str = Header(None),
+    x_openai_key: str = Header(None),
+):
+    """
+    AI content-quality analysis for a list of notes.
+    Returns per-card verdict: keep | improve | remove, plus a suggestion.
+    Cards are sent in batches of 20 to keep prompts manageable.
+    """
+    import json as _json
+    import re as _re
+
+    provider_name = req.provider or os.environ.get("DEFAULT_PROVIDER", "anthropic")
+    key = (x_anthropic_key if provider_name == "anthropic" else x_openai_key) or \
+          os.environ.get("ANTHROPIC_API_KEY" if provider_name == "anthropic" else "OPENAI_API_KEY", "")
+    provider = build_provider(provider_name, api_key=key or None)
+
+    model = req.model or (
+        AnthropicProvider.AUGMENT_MODEL if provider_name == "anthropic" else OpenAIProvider.AUGMENT_MODEL
+    )
+
+    SYSTEM = """\
+You are an expert Anki flashcard reviewer for medical education (USMLE Step 1/2/3).
+Analyze each card for CONTENT quality — not formatting.
+
+For each card return a JSON object with:
+  "index": (the card index),
+  "verdict": "keep" | "improve" | "remove",
+  "reason": one concise sentence explaining why,
+  "suggestion": (if improve/remove) specific actionable fix or why to cut it
+
+Flag for REMOVE if: card tests trivial memorization with no clinical relevance,
+front is empty or completely unintelligible, card duplicates another in the batch.
+
+Flag for IMPROVE if: cloze deletion hides the wrong thing, question is too vague,
+answer is incomplete, card should be split into two, phrasing is confusing.
+
+Flag KEEP if: card tests a high-yield concept clearly and the answer is complete.
+
+Return a JSON array only — no other text."""
+
+    notes = req.notes
+    results: list[dict] = []
+    BATCH = 20
+
+    for batch_start in range(0, len(notes), BATCH):
+        batch = notes[batch_start: batch_start + BATCH]
+        cards_text = []
+        for i, n in enumerate(batch):
+            idx = batch_start + i
+            if n.note_type == "cloze":
+                cards_text.append(f'[{idx}] TYPE=cloze\nFRONT: {n.front}')
+            else:
+                cards_text.append(f'[{idx}] TYPE={n.note_type}\nFRONT: {n.front}\nBACK: {n.back}')
+
+        user_msg = "Review these flashcards:\n\n" + "\n\n".join(cards_text)
+        try:
+            resp = provider.complete(
+                system=SYSTEM,
+                user=user_msg,
+                model=model,
+                max_tokens=2048,
+                temperature=0.2,
+            )
+            text = resp.text.strip()
+            # extract JSON array from response
+            m = _re.search(r'\[.*\]', text, _re.DOTALL)
+            if m:
+                batch_results = _json.loads(m.group(0))
+                results.extend(batch_results)
+            else:
+                # fallback: mark all as keep
+                for i in range(len(batch)):
+                    results.append({"index": batch_start + i, "verdict": "keep", "reason": "", "suggestion": ""})
+        except Exception as e:
+            for i in range(len(batch)):
+                results.append({"index": batch_start + i, "verdict": "keep",
+                                 "reason": f"Analysis failed: {e}", "suggestion": ""})
+
+    # ensure index order matches input
+    results.sort(key=lambda r: r.get("index", 0))
+    return {"results": results}
 
 
 @app.post("/dedupe", dependencies=[Depends(_auth)])
@@ -1027,7 +1190,15 @@ def _extract_docx_text(docx_bytes: bytes) -> str:
         tag = block.tag.split('}')[-1]  # strip namespace
         if tag == 'p':
             from docx.oxml.ns import qn
-            text = ''.join(r.text for r in block.iter(qn('w:t')))
+            # Collect text and soft line-breaks (w:br) in document order
+            chunks: list[str] = []
+            for node in block.iter():
+                node_tag = node.tag.split('}')[-1]
+                if node_tag == 't' and node.text:
+                    chunks.append(node.text)
+                elif node_tag == 'br':
+                    chunks.append('\n')
+            text = ''.join(chunks)
             if text.strip():
                 parts.append(text.strip())
         elif tag == 'tbl':
@@ -1132,3 +1303,81 @@ def import_image(req: ImageImportRequest, x_anthropic_key: str = Header(None)):
         raise HTTPException(401, "Invalid Anthropic API key.")
     except Exception as e:
         raise HTTPException(500, f"Image import failed: {e}")
+
+
+# =========================================
+# QUESTION SCREENSHOT IMPORT (Claude vision — MCQ mode)
+# =========================================
+
+_QUESTION_SYSTEM = """You are an expert USMLE flashcard writer. The user will show you a screenshot of a medical multiple-choice question.
+
+Your job:
+1. Read the question stem, answer choices, and correct answer (highlighted, bolded, or marked).
+2. Identify the single most important teaching point the question is testing.
+3. Write 3-6 high-yield Anki cloze cards that teach that concept — NOT a card that just repeats the question verbatim.
+
+Rules:
+- Each card must be a standalone cloze sentence: {{c1::answer}} is inline in a sentence.
+- Cards must test mechanisms, criteria, next steps, or distinguishing features — not trivia.
+- Use the distractor answer choices to create contrast cards when useful ("X is used for Y, NOT Z").
+- If the correct answer is not visible, infer it from context or mark it as unknown.
+- Output ONLY the cloze sentences, one per line, no numbering, no headers, no explanation.
+
+Example output:
+The first-line treatment for uncomplicated UTI in non-pregnant women is {{c1::nitrofurantoin or trimethoprim-sulfamethoxazole}}.
+Fluoroquinolones are avoided as first-line UTI therapy due to {{c1::resistance concerns and adverse effect profile}}.
+"""
+
+
+class QuestionImageRequest(BaseModel):
+    image_b64: str
+    media_type: str = "image/jpeg"
+    provider: str = "anthropic"
+
+
+@app.post("/import/image/question", dependencies=[Depends(_auth)])
+def import_image_question(req: QuestionImageRequest, x_anthropic_key: str = Header(None)):
+    """Use Claude vision to extract high-yield cloze cards from an MCQ screenshot."""
+    import base64 as _b64
+    import anthropic as _anthropic
+
+    api_key = x_anthropic_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(400, "Anthropic API key required. Add it in Settings.")
+
+    try:
+        client = _anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model="claude-sonnet-5-20251101",
+            max_tokens=2048,
+            system=_QUESTION_SYSTEM,
+            messages=[{
+                "role": "user",
+                "content": [{
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": req.media_type,
+                        "data": req.image_b64,
+                    },
+                }, {
+                    "type": "text",
+                    "text": "Generate high-yield cloze flashcards from this question.",
+                }],
+            }],
+        )
+        raw_text = msg.content[0].text.strip()
+        # Each line is a cloze sentence — parse directly
+        notes = []
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            from core.engine import Note, _contains_cloze
+            note_type = "cloze" if _contains_cloze(line) else "basic"
+            notes.append(Note(note_type, line, ""))
+        return {"notes": [_from_note(n) for n in notes], "raw_text": raw_text}
+    except _anthropic.AuthenticationError:
+        raise HTTPException(401, "Invalid Anthropic API key.")
+    except Exception as e:
+        raise HTTPException(500, f"Question import failed: {e}")

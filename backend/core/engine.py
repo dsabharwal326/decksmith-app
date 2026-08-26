@@ -499,19 +499,43 @@ def parse_tsv_to_notes(text: str) -> List[Note]:
     return notes
 
 
+_CLOZE_UNWRAP = re.compile(r'\{\{c\d+::(.*?)(?:::[^}]*)?\}\}', re.DOTALL)
+
+
+def _strip_cloze(text: str) -> str:
+    """Remove {{cN::...}} wrappers, keeping the inner text."""
+    return _CLOZE_UNWRAP.sub(lambda m: m.group(1), text).strip()
+
+
 def parse_card_block_to_notes(text: str) -> List[Note]:
-    """Parse the --- CARD N --- / TYPE: / TEXT: / FRONT: / BACK: / EXTRA: / TAGS: format."""
+    """Parse the TYPE: / FRONT: / BACK: card-block format.
+
+    Handles two variants:
+      - --- CARD N --- delimiters (explicit)
+      - TYPE: used directly as the card-start delimiter (no explicit dividers)
+    """
     text = _fix_encoding(text)
     notes: List[Note] = []
 
-    # Split on card-block separators
-    blocks = re.split(r'-{2,}\s*CARD\s+\d+\s*-{2,}', text, flags=re.IGNORECASE)
+    # Prefer explicit --- CARD N --- separators; otherwise split on blank-line + TYPE:
+    if re.search(r'-{2,}\s*CARD\s+\d+\s*-{2,}', text, re.IGNORECASE):
+        raw_blocks = re.split(r'-{2,}\s*CARD\s+\d+\s*-{2,}', text, flags=re.IGNORECASE)
+    else:
+        # Split at every point where a blank line is followed by TYPE: on the next line.
+        # Then prepend TYPE: back to each chunk after the first.
+        parts = re.split(r'\n\s*\n(?=TYPE\s*:)', text, flags=re.IGNORECASE)
+        raw_blocks = []
+        for p in parts:
+            # Each part may be prefixed with a title line before the first TYPE: — drop it.
+            m = re.search(r'(?:^|\n)(TYPE\s*:.*)', p, re.IGNORECASE | re.DOTALL)
+            if m:
+                raw_blocks.append(m.group(1))
 
     def _parse_tags(raw: str) -> Tuple[str, ...]:
         parts = re.split(r'[,\s]+', raw.strip())
         return tuple(p for p in parts if p)
 
-    for block in blocks:
+    for block in raw_blocks:
         block = block.strip()
         if not block:
             continue
@@ -535,9 +559,15 @@ def parse_card_block_to_notes(text: str) -> List[Note]:
         if not fields:
             continue
 
-        raw_type = fields.get('TYPE', '').lower().replace(' ', '_').replace('-', '_')
-        # Cloze cards use TEXT; basic cards use FRONT/BACK
-        front = fields.get('TEXT') or fields.get('FRONT', '')
+        # TYPE field may contain the card body on subsequent lines (no TEXT: label)
+        # e.g.  TYPE: Cloze\n\n{{c1::text}} — split off the actual type name
+        type_raw = fields.get('TYPE', '')
+        type_lines = type_raw.splitlines()
+        raw_type = type_lines[0].strip().lower().replace(' ', '_').replace('-', '_')
+        body_from_type = '\n'.join(type_lines[1:]).strip() if len(type_lines) > 1 else ''
+
+        # Cloze cards use TEXT; basic cards use FRONT/BACK; fall back to body_from_type
+        front = fields.get('TEXT') or fields.get('FRONT', '') or body_from_type
         back = fields.get('BACK', '')
         extra = fields.get('EXTRA', '')
         tags = _parse_tags(fields.get('TAGS', ''))
@@ -552,6 +582,10 @@ def parse_card_block_to_notes(text: str) -> List[Note]:
         else:
             note_type = 'basic'
 
+        # Strip erroneous {{cN::...}} wrappers from basic card back fields
+        if note_type == 'basic' and back:
+            back = _strip_cloze(back)
+
         notes.append(Note(note_type, front, back, extra, tags))
 
     return notes
@@ -562,16 +596,16 @@ def detect_format(text: str) -> str:
     stripped = text.lstrip()
     if stripped.startswith('---') and 'type:' in stripped[:200]:
         return 'yaml_frontmatter'
-    # Card-block: lines like "--- CARD 1 ---" or "TYPE: Cloze"
-    if re.search(r'-{2,}\s*CARD\s+\d+\s*-{2,}', stripped[:500], re.IGNORECASE):
-        return 'card_block'
-    if re.match(r'(TYPE|TEXT|FRONT|BACK)\s*:', stripped[:200], re.IGNORECASE):
-        return 'card_block'
-    # TSV: at least one line with a tab
+    # TSV first — card blocks never use tabs, so presence of tabs wins
     lines = stripped.splitlines()
     tab_lines = sum(1 for l in lines[:20] if '\t' in l)
     if tab_lines >= max(1, min(3, len(lines) // 2)):
         return 'tsv'
+    # Card-block: explicit separators or TYPE: Cloze/Basic/Table keyword
+    if re.search(r'-{2,}\s*CARD\s+\d+\s*-{2,}', stripped[:500], re.IGNORECASE):
+        return 'card_block'
+    if re.search(r'\bTYPE\s*:\s*(Cloze|Basic|Table)', stripped[:500], re.IGNORECASE):
+        return 'card_block'
     return 'decksmith'
 
 

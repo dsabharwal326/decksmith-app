@@ -8,6 +8,7 @@ import 'screens/review_screen.dart';
 import 'screens/export_screen.dart';
 import 'screens/enhance_screen.dart';
 import 'screens/merge_screen.dart';
+import 'screens/repair_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/ollama_setup_dialog.dart';
@@ -97,6 +98,7 @@ class _HomeShellState extends State<HomeShell> {
     (SidebarPage.topic,    Icons.auto_awesome_rounded,     'Topic',    'Generate cards from a topic'),
     (SidebarPage.enhance,  Icons.brightness_auto_rounded,  'Enhance',  'AI-enhance an existing deck'),
     (SidebarPage.merge,    Icons.merge_rounded,            'Merge',    'Combine two decks into one'),
+    (SidebarPage.repair,   Icons.build_rounded,            'Repair',   'Remove bad cards from a deck'),
     (SidebarPage.history,  Icons.history_rounded,          'History',  'Previously built decks'),
     (SidebarPage.settings, Icons.settings_rounded,         'Settings', 'API keys, backend, preferences'),
   ];
@@ -110,6 +112,7 @@ class _HomeShellState extends State<HomeShell> {
       SidebarPage.topic    => const TopicScreen(),
       SidebarPage.enhance  => const EnhanceScreen(),
       SidebarPage.merge    => const MergeScreen(),
+      SidebarPage.repair   => const RepairScreen(),
       SidebarPage.history  => const HistoryScreen(),
       SidebarPage.settings => const SettingsScreen(),
     };
