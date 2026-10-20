@@ -51,15 +51,43 @@ class UploadScreen extends StatefulWidget {
 
 class _UploadScreenState extends State<UploadScreen> {
   final _deckNameCtrl = TextEditingController(text: 'My Deck');
+  bool _bannerDismissed = false;
   final List<_PickedFile> _files = [];
   bool _draggingCard = false;
   bool _draggingApkg = false;
   bool _skipDupes = false;
   bool _questionMode = false;   // true = MCQ screenshot → cloze cards
   String? _detectedStep;
+  bool _nameIsAutoSuggested = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = context.read<AppState>();
+      state.addListener(_onStepChanged);
+    });
+  }
+
+  void _onStepChanged() {
+    if (!mounted) return;
+    final state = context.read<AppState>();
+    if (_nameIsAutoSuggested || _deckNameCtrl.text == 'My Deck') {
+      final suggested = _stepDefaultName(state.usmleStep);
+      if (_deckNameCtrl.text != suggested) {
+        setState(() {
+          _deckNameCtrl.text = suggested;
+          _nameIsAutoSuggested = true;
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {
+    if (mounted) {
+      try { context.read<AppState>().removeListener(_onStepChanged); } catch (_) {}
+    }
     _deckNameCtrl.dispose();
     super.dispose();
   }
@@ -84,8 +112,18 @@ class _UploadScreenState extends State<UploadScreen> {
     final base = fileName.contains('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
     final cleaned = base.replaceAll(RegExp(r'[_\-\.]+'), ' ').trim();
     final titled = cleaned.split(' ').map((w) => w.isEmpty ? '' : w[0].toUpperCase() + w.substring(1)).join(' ');
-    if (titled.isNotEmpty) _deckNameCtrl.text = titled;
+    if (titled.isNotEmpty) {
+      _deckNameCtrl.text = titled;
+      _nameIsAutoSuggested = true;
+    }
   }
+
+  String _stepDefaultName(String step) => switch (step) {
+    'step1' => 'Step 1 Deck',
+    'step2' => 'Step 2 CK Deck',
+    'step3' => 'Step 3 Deck',
+    _ => 'My Deck',
+  };
 
   bool _isAcceptedPath(String path) {
     final lp = path.toLowerCase();
@@ -261,9 +299,42 @@ class _UploadScreenState extends State<UploadScreen> {
           children: [
             Text('Generate from file', style: tt.headlineMedium?.copyWith(fontWeight: FontWeight.w600)),
             const SizedBox(height: 2),
-            Text('Drop one or more .txt, .tsv, .csv, .pdf, .docx, .apkg, or image files — all files are merged into one deck',
+            Text('Drop a file and get a ready-to-import Anki deck in seconds.',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
             const SizedBox(height: 16),
+
+            // ── First-run onboarding banner ───────────────────────────────
+            if (!_bannerDismissed && state.history.isEmpty) ...[
+              Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+                decoration: BoxDecoration(
+                  color: cs.primaryContainer.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: cs.primary.withOpacity(0.25)),
+                ),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Icon(Icons.tips_and_updates_rounded, size: 18, color: cs.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('Get started', style: tt.labelMedium?.copyWith(
+                        fontWeight: FontWeight.w700, color: cs.primary)),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Drop a PDF, Word doc, TSV, or paste notes — Decksmith extracts cards automatically. '
+                        'Select your exam scope, then hit Preview & build.',
+                        style: tt.bodySmall?.copyWith(color: cs.onPrimaryContainer),
+                      ),
+                    ]),
+                  ),
+                  GestureDetector(
+                    onTap: () => setState(() => _bannerDismissed = true),
+                    child: Icon(Icons.close_rounded, size: 16, color: cs.onSurfaceVariant),
+                  ),
+                ]),
+              ),
+              const SizedBox(height: 16),
+            ],
 
             // ── Image mode toggle ─────────────────────────────────────────
             Row(
@@ -397,6 +468,7 @@ class _UploadScreenState extends State<UploadScreen> {
             const SizedBox(height: 8),
             TextField(
               controller: _deckNameCtrl,
+              onChanged: (_) => _nameIsAutoSuggested = false,
               decoration: InputDecoration(
                 hintText: 'e.g. Cardiology Block 2',
                 border: const OutlineInputBorder(),

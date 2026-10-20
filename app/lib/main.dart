@@ -271,15 +271,6 @@ class _StatusBar extends StatelessWidget {
             color: const Color(0xFF22C55E),
             cs: cs, tt: tt,
           ),
-        ] else ...[
-          // Idle — show history count
-          if (state.history.isNotEmpty)
-            _StatusChip(
-              icon: Icons.layers_rounded,
-              label: '${state.history.length} deck${state.history.length == 1 ? '' : 's'} built',
-              color: cs.onSurfaceVariant,
-              cs: cs, tt: tt,
-            ),
         ],
 
         const Spacer(),
@@ -832,7 +823,7 @@ class _FullSidebar extends StatelessWidget {
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('Decksmith', style: tt.titleSmall?.copyWith(
                   fontWeight: FontWeight.w700, letterSpacing: 0.1)),
-                Text('Anki deck builder', style: tt.bodySmall?.copyWith(
+                Text('AI flashcard builder', style: tt.bodySmall?.copyWith(
                   color: cs.onSurfaceVariant, fontSize: 10)),
               ]),
             ]),

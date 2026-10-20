@@ -28,6 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _showOpenAI = false;
   bool? _ollamaReachable;
   bool _checkingOllama = false;
+  bool _showAdvanced = false;
 
   @override
   void initState() {
@@ -114,30 +115,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _SectionLabel(icon: Icons.terminal_rounded, label: 'Backend'),
             const SizedBox(height: 12),
             _BackendControl(),
-            const SizedBox(height: 12),
-            _Field(
-              label: 'Backend URL',
-              child: TextField(controller: _urlCtrl, decoration: _dec('http://localhost:8503')),
-            ),
-            const SizedBox(height: 12),
-            _Field(
-              label: 'Backend path (api.py)',
-              hint: 'Leave empty to skip auto-launch',
+            const SizedBox(height: 8),
+            GestureDetector(
+              onTap: () => setState(() => _showAdvanced = !_showAdvanced),
               child: Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _backendPathCtrl,
-                    decoration: _dec('/path/to/api.py'),
-                  ),
+                Icon(
+                  _showAdvanced ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: _pickBackendPath,
-                  icon: const Icon(Icons.folder_open_rounded, size: 16),
-                  label: const Text('Browse'),
-                ),
+                const SizedBox(width: 4),
+                Text('Advanced',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  )),
               ]),
             ),
+            if (_showAdvanced) ...[
+              const SizedBox(height: 12),
+              _Field(
+                label: 'Backend URL',
+                child: TextField(controller: _urlCtrl, decoration: _dec('http://localhost:8503')),
+              ),
+              const SizedBox(height: 12),
+              _Field(
+                label: 'Backend path (api.py)',
+                hint: 'Leave empty to skip auto-launch',
+                child: Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _backendPathCtrl,
+                      decoration: _dec('/path/to/api.py'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _pickBackendPath,
+                    icon: const Icon(Icons.folder_open_rounded, size: 16),
+                    label: const Text('Browse'),
+                  ),
+                ]),
+              ),
+            ],
 
             const SizedBox(height: 28),
 
