@@ -200,6 +200,20 @@ class _UploadScreenState extends State<UploadScreen> {
         const SnackBar(content: Text('Pick at least one card file first'), behavior: SnackBarBehavior.floating));
       return;
     }
+    if (state.backendStatus == BackendStatus.offline ||
+        state.backendStatus == BackendStatus.unknown) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(state.backendStatus == BackendStatus.unknown
+            ? 'Backend is starting up — please wait a moment, then try again.'
+            : 'Backend is offline — tap Start to launch it.'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 5),
+        action: state.backendStatus == BackendStatus.offline
+            ? SnackBarAction(label: 'Start', onPressed: () => state.launchBackend())
+            : null,
+      ));
+      return;
+    }
     state.deckName = _deckNameCtrl.text.trim().isEmpty ? 'My Deck' : _deckNameCtrl.text.trim();
     state.setPhase(AppPhase.processing);
     final api = ApiService(state);

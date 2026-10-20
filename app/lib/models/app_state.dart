@@ -297,6 +297,27 @@ class AppState extends ChangeNotifier {
     } catch (_) {}
   }
 
+  Future<void> loadDemoContent() async {
+    if (history.isNotEmpty) return;
+    // Minimal empty-zip bytes — demo entries are display-only
+    final stub = Uint8List.fromList([
+      0x50, 0x4B, 0x05, 0x06, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    final now = DateTime.now();
+    final samples = [
+      HistoryEntry(deckName: 'Step 1 — Cardiovascular', cardCount: 312, date: now.subtract(const Duration(days: 2)), apkgData: stub),
+      HistoryEntry(deckName: 'Step 1 — Renal & Acid-Base', cardCount: 178, date: now.subtract(const Duration(days: 5)), apkgData: stub),
+      HistoryEntry(deckName: 'Step 2 CK — Cardiology', cardCount: 224, date: now.subtract(const Duration(days: 9)), apkgData: stub),
+    ];
+    for (final e in samples) {
+      history.add(e);
+      _persistHistoryEntry(e);
+    }
+    notifyListeners();
+  }
+
   void setError(String msg) {
     errorMessage = msg;
     activeJobId = null;

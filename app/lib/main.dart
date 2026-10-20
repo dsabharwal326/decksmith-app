@@ -143,7 +143,9 @@ class _HomeShellState extends State<HomeShell> {
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('Error'),
-            content: Text(msg),
+            content: SingleChildScrollView(
+              child: Text(msg.length > 600 ? '${msg.substring(0, 600)}…' : msg),
+            ),
             actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
           ),
         );

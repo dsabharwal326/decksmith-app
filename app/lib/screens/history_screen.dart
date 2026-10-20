@@ -54,6 +54,7 @@ class HistoryScreen extends StatelessWidget {
     final history = context.watch<AppState>().history;
 
     if (history.isEmpty) {
+      final state = context.read<AppState>();
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -71,6 +72,12 @@ class HistoryScreen extends StatelessWidget {
             const SizedBox(height: 6),
             Text('Decks you build will appear here',
               style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              onPressed: () => state.loadDemoContent(),
+              icon: const Icon(Icons.science_rounded, size: 16),
+              label: const Text('Load sample decks'),
+            ),
           ],
         ),
       );
